@@ -33,15 +33,13 @@ class Response:
 date_formatter = "%Y-%m-%d %H-%M-%S"
 gson_date_format = "%Y-%m-%dT%H:%M:%S"
 
-def clean_output_directory(output_dir: Path):
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
 def copy_folders(input_dir: Path, output_dir: Path):
     for folder in input_dir.iterdir():
         if folder.is_dir():
-            shutil.copytree(folder, output_dir / folder.name)
+            dest_folder = output_dir / folder.name
+            if dest_folder.exists():
+                shutil.rmtree(dest_folder)
+            shutil.copytree(folder, dest_folder)
 
 def process(json_data: str, output_dir: Path):
     response_dict = json.loads(json_data)
@@ -69,7 +67,6 @@ def process(json_data: str, output_dir: Path):
 
     messages = [
         msg for msg in response.messages 
-        
     ]
 
     start = 0
@@ -173,15 +170,12 @@ def create_text_entity(entity: TextEntityResponse) -> Optional[str]:
     return entity_type_mapping.get(entity.type)
 
 def main(input_dir: Path = Path("input"), output_dir: Path = Path("output")):
-    # Очистка папки output
-    clean_output_directory(output_dir)
+    # Копируем папки из input в output
+    copy_folders(input_dir, output_dir)
 
     # Загружаем JSON из файла result.json
     with open(input_dir / "result.json", "r") as json_file:
         json_data = json_file.read()
-
-    # Копируем папки из input в output
-    copy_folders(input_dir, output_dir)
 
     # Обрабатываем JSON и сохраняем результаты в output
     process(json_data, output_dir)
