@@ -112,7 +112,9 @@ def get_folder_name(year: int, month: int) -> str:
 
 def create_header(message: MessageResponse, prev_file: Optional[str], next_file: Optional[str]) -> str:
     time_format = message.date.strftime("%Y-%m-%d %H:%M:%S")
-    hash_tags = [entity.text for entity in message.text_entities if entity.type == "hashtag"]
+    
+    # Убираем символ решетки # из хештегов
+    hash_tags = [entity.text.lstrip('#') for entity in message.text_entities if entity.type == "hashtag"]
 
     header = f"---\nDate: {time_format}\n"
     
@@ -133,6 +135,7 @@ def create_header(message: MessageResponse, prev_file: Optional[str], next_file:
     header += "---"
     
     return header
+
 
 def create_text(message: MessageResponse) -> Optional[str]:
     return "\n".join(filter(None, (create_text_entity(entity) for entity in message.text_entities)))
