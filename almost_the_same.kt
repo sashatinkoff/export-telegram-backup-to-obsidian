@@ -1,178 +1,242 @@
-import os
-import json
-import shutil
-from datetime import datetime
-from dateutil import parser
-from pathlib import Path
 
-class TelegramExport:
-    def __init__(self):
-        self.date_format = "%Y-%m-%dT%H:%M:%S"
-        self.file_date_format = "%Y-%m-%d %H-%M-%S"
+class TelegramExport2ObsidianTest {
+    @Test
+    fun makeTest() {
+        val directoryPath = "src/test/resources/"
+        val folder = File(directoryPath)
+        val json = folder.listFiles().orEmpty().first { it.name == "tg_export_2409.json" }.readText()
 
-    def save_posts(self, posts, output_folder):
-        for index, post in enumerate(posts):
-            prev_file = posts[index - 1].get('file_name') if index > 0 else None
-            next_file = posts[index + 1].get('file_name') if index < len(posts) - 1 else None
-            header = self.create_header(post, next_file, prev_file)
+        val inputFolder = "input"
+        val outputFolder = "output"
 
-            text = f"{header}\n\n{post['text']}"
-            file_path = self.save_to_file(text, post['date'], post['file_name'], output_folder)
-            print(f"Saved {index + 1}/{len(posts)}, file={file_path}")
+        val export = TelegramExport()
+        export.copyFolders(inputFolder, outputFolder)
 
-    def copy_folders(self, input_folder, output_folder):
-        if not os.path.exists(output_folder):
-            os.makedirs(output_folder)
+        val posts = export.getPosts(json)
+        export.savePosts(posts, outputFolder)
+    }
+}
 
-        for folder_name in os.listdir(input_folder):
-            src_folder = os.path.join(input_folder, folder_name)
-            dest_folder = os.path.join(output_folder, folder_name)
-            if os.path.isdir(src_folder):
-                print(f"Copying {folder_name}")
-                try:
-                    shutil.copytree(src_folder, dest_folder, dirs_exist_ok=True)
-                except Exception as e:
-                    print(f"Error copying {folder_name}: {e}")
+fun main() {
+    val inputFolder = "input"
+    val outputFolder = "output"
 
-    def save_to_file(self, text, date, file_name, output_folder):
-        date_obj = parser.parse(date)
-        folder_name = self.get_folder_name(date_obj.year, date_obj.month)
-        folder_path = os.path.join(output_folder, folder_name)
+    val export = TelegramExport()
+    export.copyFolders(inputFolder, outputFolder)
 
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
+    val json = File(inputFolder, "result.json").readText()
+    val posts = export.getPosts(json)
+    export.savePosts(posts, outputFolder)
+}
 
-        file_path = os.path.join(folder_path, file_name)
-        with open(file_path, 'w') as f:
-            f.write(text)
+class TelegramExport {
+    private val gson: Gson = GsonBuilder()
+        .setDateFormat("yyyy-MM-dd'T'HH:mm:ss")
+        .create()
 
-        return file_path
+    private val dateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH-mm-ss")
 
-    def get_folder_name(self, year, month):
-        month_name = datetime(year, month, 1).strftime('%B')
-        formatted_month = f"{month:02d}"
-        return f"notes/{year}/{year}-{formatted_month}-{month_name.capitalize()}"
 
-    def get_posts(self, json_data):
-        messages = json_data.get('messages', [])
-        posts = []
-        start = 0
+    fun savePosts(posts: List<TgPost>, outputFolder: String) {
+        var index = 0
+        while (index < posts.size) {
+            val prevFile = posts.getOrNull(index - 1)?.fileName
+            val nextFile = posts.getOrNull(index + 1)?.fileName
+            val post = posts[index]
+            val header = createHeader(post, nextFile, prevFile)
 
-        while start < len(messages):
-            message = messages[start]
-            text = [self.create_text(message)]
+            val text = buildString {
+                append(header)
+                appendLine()
+                append(post.text)
+            }
+            println(text)
 
-            next_start = start + 1
-            threshold = 120  # 2 minutes in seconds
+            val file = saveToFile(text, post.date, post.fileName, outputFolder)
+            println("saved $index/${posts.size}, file=$file")
 
-            while next_start < len(messages):
-                next_message = messages[next_start]
-                time_diff = (parser.parse(next_message['date']) - parser.parse(message['date'])).total_seconds()
-                if time_diff >= threshold:
+            index++
+        }
+    }
+
+    fun copyFolders(inputFolder: String, outputFolder: String) {
+        // copy each folder from input to output
+        val input = File(inputFolder)
+        val output = File(outputFolder)
+
+        val files = output.listFiles()?.filter { it.isDirectory } ?: return
+        for (folder in files) {
+            val target = File(input, folder.name)
+            println("copy ${folder.name}")
+            try {
+
+            } catch (_: Throwable) {
+                folder.copyRecursively(target, false)
+            }
+        }
+    }
+
+    private fun saveToFile(text: String, date: Date, fileName: String, outputFolder: String): String {
+        val calendar = Calendar.getInstance()
+        calendar.time = date
+        val folderName = getFolderName(calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH) + 1)
+        val folder = File(outputFolder, folderName)
+
+        val file = File(folder, fileName)
+        try {
+            file.saveString(text)
+        } catch (_: Throwable) {
+        }
+
+        return file.absolutePath
+    }
+
+    private fun getFolderName(year: Int, month: Int): String {
+        val monthName = Month.of(month).name.lowercase().replaceFirstChar { it.uppercase() }
+        val formattedMonth = String.format("%02d", month)
+        return "notes/$year/$year-$formattedMonth-$monthName"
+    }
+
+    fun getPosts(json: String): List<TgPost> {
+        val result = mutableListOf<TgPost>()
+        val list = gson.fromJson<Response>(json).messages
+
+        var start = 0
+
+        while (start < list.size) {
+            val message = list[start]
+            var date = message.date
+            val text = StringBuilder()
+            text.appendLine()
+            text.append(createText(message))
+
+            var nextStart = start + 1
+            val tresHold = TimeUnit.MINUTES.toMillis(2)
+            while (nextStart < list.size) {
+                val nextMessage = list[nextStart]
+                val isSameDate = (nextMessage.date.time - date.time) < tresHold
+
+                if (!isSameDate)
                     break
 
-                text.append(self.create_text(next_message))
-                next_start += 1
+                date = nextMessage.date
 
-            post = {
-                'id': message['id'],
-                'date': message['date'],
-                'text': "\n".join(filter(None, text)),
-                'file_name': self.get_file_name(message),
-                'hash_tags': [entity['text'].replace('#', '') for entity in message.get('text_entities', []) if entity['type'] == 'hashtag'],
-                'geo': message.get('location_information')
+                text.appendLine()
+                text.append(createText(nextMessage))
+
+                nextStart++
             }
-            posts.append(post)
-            start = next_start
 
-        return posts
+            start = nextStart
 
-    def create_text(self, message):
-        entities = message.get('text_entities', [])
-
-        while entities and entities[-1].get('type') == "plain" and not entities[-1].get('text'):
-            entities.pop()
-
-        while entities and entities[-1].get('type') == "hashtag":
-            entities.pop()
+            val hashTags = message.entities?.filter { it.type == "hashtag" }?.map { it.text.replace("#", "") }
+            val post = TgPost(message.id, message.date, text.toString(), getFileName(message), hashTags, message.geo)
 
 
-        return self.create_text2(entities, message.get('photo'), message.get('file'))
-
-    def create_text2(self, entities, photo, file):
-        # Добавим условие, которое игнорирует None и заменяет его на пустую строку
-        text = ''.join([self.create_text_entity(entity) or '' for entity in entities]).strip()
-
-        result = f"{text}\n" if text else ""
-        attach = photo or file
-        if attach:
-            result += f"![]({attach})\n"
+            result.add(post)
+        }
 
         return result
+    }
 
-    def create_text_entity(self, entity):
-        entity_type = entity['type']
-        text = entity['text']
-        if entity_type == "hashtag":
-            return text.replace('#', '')
-        elif entity_type == "plain":
-            return text
-        elif entity_type == "blockquote":
-            return "> " + text.replace('\n', '\n> ')
-        elif entity_type == "pre":
-            return f"```\n{text}\n```"
-        elif entity_type == "spoiler":
-            return text
-        elif entity_type == "text_link":
-            return f"[{text}]({entity.get('href')})"
-        elif entity_type == "italic":
-            return f"*{text}*"
-        elif entity_type == "link":
-            return f"[{text}]({text})"
-        elif entity_type == "bold":
-            return f"**{text}**"
-        elif entity_type == "strikethrough":
-            return f"~~{text}~~"
-        elif entity_type == "underline":
-            return f"++{text}++"
-        else:
-            return None
+    private fun createText(message: MessageResponse): String? {
+        val entities = message.entities.orEmpty().toMutableList()
 
-    def create_header(self, post, next_file, prev_file):
-        time_format = "%b %d, %Y %I:%M %p"
-        date_str = datetime.strptime(post['date'], self.date_format).strftime(time_format)
-        header = f"---\nDate: {date_str}"
+        if (entities.lastOrNull()?.type == "plain" && entities.lastOrNull()?.text?.isEmpty() == true)
+            entities.removeLast()
 
-        if post.get('hash_tags'):
-            header += "\ntags:\n" + "\n".join(f"  - {tag}" for tag in post['hash_tags'])
+        while (true) {
+            if (entities.lastOrNull()?.type == "hashtag")
+                entities.removeLast()
+            else
+                break
+        }
 
-        if post.get('geo'):
-            geo = post['geo']
-            header += f"\nLocation: [Open map](https://maps.google.com/?q={geo['latitude']},{geo['longitude']})"
 
-        if prev_file:
-            header += f'\nBack: "[[{prev_file}]]"'
-        if next_file:
-            header += f'\nNext: "[[{next_file}]]"'
+        return createText2(entities, message.photo, message.file)
+    }
 
-        return header + "\n---"
+    private fun createText2(entities: List<TextEntityResponse>, photo: String?, file: String?): String? {
+        val result = StringBuilder()
+        val text = entities
+            .joinToString("") {
+                createText(it).orEmpty()
+            }.takeIf { it.isNotBlank() }
 
-    def get_file_name(self, message):
-        date_obj = parser.parse(message['date'])
-        return date_obj.strftime(self.file_date_format) + ".md"
+        if (!text.isNullOrBlank())
+            result.appendLine(text)
 
-def main():
-    input_folder = "input"
-    output_folder = "output"
+        val attach = photo ?: file
+        if (attach != null)
+            result.append("![]($attach)").appendLine()
 
-    export = TelegramExport()
-    export.copy_folders(input_folder, output_folder)
+        return result.toString()
+    }
 
-    with open(os.path.join(input_folder, "result.json"), "r") as f:
-        json_data = json.load(f)
+    private fun createText(entity: TextEntityResponse): String? {
+        return when (entity.type) {
+            "hashtag" -> entity.text.replace("#", "")
+            "plain" -> entity.text
+            "blockquote" -> "> ${entity.text}".replace("\n", "\n> ")
+            "pre" -> "```\n${entity.text}\n```"
+            "spoiler" -> entity.text
+            "text_link" -> "[${entity.text}](${entity.href})"
+            "italic" -> "*${entity.text}*"
+            "link" -> "[${entity.text}](${entity.text})"
+            "bold" -> "**${entity.text}**"
+            "strikethrough" -> "~~${entity.text}~~"
+            "underline" -> "++${entity.text}++"
+            else -> null
+        }
+    }
 
-    posts = export.get_posts(json_data)
-    export.save_posts(posts, output_folder)
+    private fun createHeader(post: TgPost, prevFile: String?, nextFile: String?) = buildString {
+        val timeFormat = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.MEDIUM)
+        val hashTags = post.hashTags.orEmpty()
 
-if __name__ == "__main__":
-    main()
+        append("---\n")
+        append("Date: ", timeFormat.format(post.date))
+
+        if (hashTags.isNotEmpty()) {
+            append("\n", "tags:")
+            for (tag in hashTags) {
+                append("\n", "  - ${tag}")
+            }
+        }
+
+        post.geo?.let {
+            append("\n", "Location: ", "[Open map](https://maps.google.com/?q=${it.lat},${it.lng})")
+        }
+
+        prevFile?.let { append("\n", "Back: \"[[$it]]\"") }
+        nextFile?.let { append("\n", "Next: \"[[$it]]\"") }
+
+        append("\n---")
+    }
+
+
+    private fun getFileName(message: MessageResponse): String {
+        val time = dateFormatter.format(message.date.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime())
+        return "$time.md"
+    }
+}
+
+
+data class Response(@SerializedName("messages") val messages: List<MessageResponse>)
+data class MessageResponse(
+    @SerializedName("id") val id: Int,
+    @SerializedName("date") val date: Date,
+    @SerializedName("file") val file: String?,
+    @SerializedName("photo") val photo: String?,
+    @SerializedName("location_information") val geo: GeoResponse?,
+    @SerializedName("text_entities") val entities: List<TextEntityResponse>?
+)
+
+data class TextEntityResponse(
+    @SerializedName("type") val type: String,
+    @SerializedName("text") val text: String,
+    @SerializedName("href") val href: String?,
+)
+
+data class GeoResponse(@SerializedName("latitude") val lat: Double, @SerializedName("longitude") val lng: Double)
+data class TgPost(val id: Int, val date: Date, val text: String, val fileName: String, val hashTags: List<String>?, val geo: GeoResponse?)
