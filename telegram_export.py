@@ -138,7 +138,7 @@ def create_header(message: MessageResponse, prev_file: Optional[str], next_file:
 
 
 def create_text(message: MessageResponse) -> Optional[str]:
-    return "\n".join(filter(None, (create_text_entity(entity) for entity in message.text_entities)))
+    return "".join(filter(None, (create_text_entity(entity) for entity in message.text_entities)))
 
 def has_attach(message: MessageResponse) -> bool:
     return message.photo is not None or message.file is not None
@@ -159,8 +159,9 @@ def create_attachments(messages: List[MessageResponse], start: int, end: int) ->
 
 def create_text_entity(entity: TextEntityResponse) -> Optional[str]:
     entity_type_mapping = {
+        "hashtag": entity.text,
         "plain": entity.text,
-        "blockquote": f"> {entity.text}",
+        "blockquote": format_blockquote(entity.text),
         "pre": f"```\n{entity.text}\n```",
         "spoiler": entity.text,
         "text_link": f"[{entity.text}]({entity.href})",
@@ -171,6 +172,11 @@ def create_text_entity(entity: TextEntityResponse) -> Optional[str]:
         "underline": f"++{entity.text}++",
     }
     return entity_type_mapping.get(entity.type)
+
+def format_blockquote(entity_text):
+    lines = entity_text.splitlines()  # Разбиваем текст на строки
+    formatted_text = "\n".join([f"> {line}" for line in lines])  # Добавляем ">" перед каждой строкой
+    return formatted_text
 
 def main(input_dir: Path = Path("input"), output_dir: Path = Path("output")):
     # Копируем папки из input в output
