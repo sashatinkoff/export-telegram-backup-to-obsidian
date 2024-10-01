@@ -1,193 +1,178 @@
+import os
 import json
 import shutil
-from datetime import datetime, timedelta
+from datetime import datetime
+from dateutil import parser
 from pathlib import Path
-from typing import List, Optional, Tuple
-from dataclasses import dataclass
 
-@dataclass
-class GeoResponse:
-    latitude: float
-    longitude: float
+class TelegramExport:
+    def __init__(self):
+        self.date_format = "%Y-%m-%dT%H:%M:%S"
+        self.file_date_format = "%Y-%m-%d %H-%M-%S"
 
-@dataclass
-class TextEntityResponse:
-    type: str
-    text: str
-    href: Optional[str] = None
+    def save_posts(self, posts, output_folder):
+        for index, post in enumerate(posts):
+            prev_file = posts[index - 1].get('file_name') if index > 0 else None
+            next_file = posts[index + 1].get('file_name') if index < len(posts) - 1 else None
+            header = self.create_header(post, next_file, prev_file)
 
-@dataclass
-class MessageResponse:
-    id: int
-    date: datetime
-    file: Optional[str] = None
-    photo: Optional[str] = None
-    location_information: Optional[GeoResponse] = None
-    text_entities: List[TextEntityResponse] = None
+            text = f"{header}\n\n{post['text']}"
+            file_path = self.save_to_file(text, post['date'], post['file_name'], output_folder)
+            print(f"Saved {index + 1}/{len(posts)}, file={file_path}")
 
-@dataclass
-class Response:
-    messages: List[MessageResponse]
+    def copy_folders(self, input_folder, output_folder):
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
 
-# DateTimeFormatter and Gson equivalent in Python
-date_formatter = "%Y-%m-%d %H-%M-%S"
-gson_date_format = "%Y-%m-%dT%H:%M:%S"
+        for folder_name in os.listdir(input_folder):
+            src_folder = os.path.join(input_folder, folder_name)
+            dest_folder = os.path.join(output_folder, folder_name)
+            if os.path.isdir(src_folder):
+                print(f"Copying {folder_name}")
+                try:
+                    shutil.copytree(src_folder, dest_folder, dirs_exist_ok=True)
+                except Exception as e:
+                    print(f"Error copying {folder_name}: {e}")
 
-def copy_folders(input_dir: Path, output_dir: Path):
-    for folder in input_dir.iterdir():
-        if folder.is_dir():
-            dest_folder = output_dir / folder.name
-            if dest_folder.exists():
-                shutil.rmtree(dest_folder)
-            shutil.copytree(folder, dest_folder)
+    def save_to_file(self, text, date, file_name, output_folder):
+        date_obj = parser.parse(date)
+        folder_name = self.get_folder_name(date_obj.year, date_obj.month)
+        folder_path = os.path.join(output_folder, folder_name)
 
-def process(json_data: str, output_dir: Path):
-    response_dict = json.loads(json_data)
-    response = Response(
-        messages=[
-            MessageResponse(
-                id=msg["id"],
-                date=datetime.strptime(msg["date"], gson_date_format),
-                file=msg.get("file"),
-                photo=msg.get("photo"),
-                location_information=GeoResponse(
-                    latitude=msg["location_information"]["latitude"],
-                    longitude=msg["location_information"]["longitude"]
-                ) if msg.get("location_information") else None,
-                text_entities=[
-                    TextEntityResponse(
-                        type=ent["type"],
-                        text=ent["text"],
-                        href=ent.get("href")
-                    ) for ent in msg.get("text_entities", [])
-                ]
-            ) for msg in response_dict.get("messages", [])
-        ]
-    )
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
 
-    messages = [
-        msg for msg in response.messages 
-    ]
+        file_path = os.path.join(folder_path, file_name)
+        with open(file_path, 'w') as f:
+            f.write(text)
 
-    start = 0
-    while start < len(messages):
-        message = messages[start]
-        text = create_text(message)
-        attachments = None
+        return file_path
 
-        if has_attach(message):
-            end = find_last_attach_post_index(start, messages, message.date)
-            attachments = create_attachments(messages, start, end)
-            start = end
+    def get_folder_name(self, year, month):
+        month_name = datetime(year, month, 1).strftime('%B')
+        formatted_month = f"{month:02d}"
+        return f"notes/{year}/{year}-{formatted_month}-{month_name.capitalize()}"
 
-        current_file_name = get_file_name(message)
-        prev_file, next_file = generate_breadcrumb_links(start, messages)
-        header = create_header(message, prev_file, next_file)
-        folder_name = get_folder_name(message.date.year, message.date.month)
+    def get_posts(self, json_data):
+        messages = json_data.get('messages', [])
+        posts = []
+        start = 0
 
-        post = f"{header}\n{text or ''}\n{attachments or ''}"
+        while start < len(messages):
+            message = messages[start]
+            text = [self.create_text(message)]
 
-        # Сохраняем файл
-        notes_path = output_dir / "notes"
-        year_folder = notes_path / str(message.date.year)
-        month_folder = year_folder / folder_name
-        month_folder.mkdir(parents=True, exist_ok=True)
-        with open(month_folder / f"{current_file_name}.md", "w") as f:
-            f.write(post)
+            next_start = start + 1
+            threshold = 120  # 2 minutes in seconds
 
-        start += 1
+            while next_start < len(messages):
+                next_message = messages[next_start]
+                time_diff = (parser.parse(next_message['date']) - parser.parse(message['date'])).total_seconds()
+                if time_diff >= threshold:
+                    break
 
-def get_file_name(message: MessageResponse) -> str:
-    return message.date.strftime(date_formatter)
+                text.append(self.create_text(next_message))
+                next_start += 1
 
-def generate_breadcrumb_links(start: int, messages: List[MessageResponse]) -> Tuple[Optional[str], Optional[str]]:
-    prev_file = get_file_name(messages[start - 1]) if start > 0 else None
-    next_file = get_file_name(messages[start + 1]) if start < len(messages) - 1 else None
-    return prev_file, next_file
+            post = {
+                'id': message['id'],
+                'date': message['date'],
+                'text': "\n".join(filter(None, text)),
+                'file_name': self.get_file_name(message),
+                'hash_tags': [entity['text'].replace('#', '') for entity in message.get('text_entities', []) if entity['type'] == 'hashtag'],
+                'geo': message.get('location_information')
+            }
+            posts.append(post)
+            start = next_start
 
-def get_folder_name(year: int, month: int) -> str:
-    month_name = datetime(year, month, 1).strftime('%B')
-    formatted_month = f"{month:02d}-{month_name}"
-    return f"{year}-{formatted_month}"
+        return posts
 
-def create_header(message: MessageResponse, prev_file: Optional[str], next_file: Optional[str]) -> str:
-    time_format = message.date.strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Убираем символ решетки # из хештегов
-    hash_tags = [entity.text.lstrip('#') for entity in message.text_entities if entity.type == "hashtag"]
+    def create_text(self, message):
+        entities = message.get('text_entities', [])
 
-    header = f"---\nDate: {time_format}\n"
-    
-    if hash_tags:
-        header += "tags:\n"
-        header += "\n".join(f"  - {tag}" for tag in hash_tags)
-        header += "\n"
-    
-    if message.location_information:
-        header += f"Location: https://maps.google.com/?q={message.location_information.latitude},{message.location_information.longitude}\n"
-    
-    if prev_file:
-        header += f"Back: \"[[{prev_file}]]\"\n"
-    
-    if next_file:
-        header += f"Next: \"[[{next_file}]]\"\n"
-    
-    header += "---"
-    
-    return header
+        while entities and entities[-1].get('type') == "plain" and not entities[-1].get('text'):
+            entities.pop()
+
+        while entities and entities[-1].get('type') == "hashtag":
+            entities.pop()
 
 
-def create_text(message: MessageResponse) -> Optional[str]:
-    return "".join(filter(None, (create_text_entity(entity) for entity in message.text_entities)))
+        return self.create_text2(entities, message.get('photo'), message.get('file'))
 
-def has_attach(message: MessageResponse) -> bool:
-    return message.photo is not None or message.file is not None
+    def create_text2(self, entities, photo, file):
+        # Добавим условие, которое игнорирует None и заменяет его на пустую строку
+        text = ''.join([self.create_text_entity(entity) or '' for entity in entities]).strip()
 
-def find_last_attach_post_index(index: int, messages: List[MessageResponse], created: datetime) -> int:
-    threshold = timedelta(seconds=10)
-    created_time = created
+        result = f"{text}\n" if text else ""
+        attach = photo or file
+        if attach:
+            result += f"![]({attach})\n"
 
-    for i in range(index, len(messages)):
-        item = messages[i]
-        if has_attach(item) and (item.date - created_time) <= threshold:
-            continue
-        return i - 1
-    return index
+        return result
 
-def create_attachments(messages: List[MessageResponse], start: int, end: int) -> str:
-    return "\n".join(f"![]({msg.file or msg.photo})" for msg in messages[start:end + 1])
+    def create_text_entity(self, entity):
+        entity_type = entity['type']
+        text = entity['text']
+        if entity_type == "hashtag":
+            return text.replace('#', '')
+        elif entity_type == "plain":
+            return text
+        elif entity_type == "blockquote":
+            return "> " + text.replace('\n', '\n> ')
+        elif entity_type == "pre":
+            return f"```\n{text}\n```"
+        elif entity_type == "spoiler":
+            return text
+        elif entity_type == "text_link":
+            return f"[{text}]({entity.get('href')})"
+        elif entity_type == "italic":
+            return f"*{text}*"
+        elif entity_type == "link":
+            return f"[{text}]({text})"
+        elif entity_type == "bold":
+            return f"**{text}**"
+        elif entity_type == "strikethrough":
+            return f"~~{text}~~"
+        elif entity_type == "underline":
+            return f"++{text}++"
+        else:
+            return None
 
-def create_text_entity(entity: TextEntityResponse) -> Optional[str]:
-    entity_type_mapping = {
-        "hashtag": entity.text,
-        "plain": entity.text,
-        "blockquote": format_blockquote(entity.text),
-        "pre": f"```\n{entity.text}\n```",
-        "spoiler": entity.text,
-        "text_link": f"[{entity.text}]({entity.href})",
-        "italic": f"*{entity.text}*",
-        "link": f"[{entity.text}]({entity.text})",
-        "bold": f"**{entity.text}**",
-        "strikethrough": f"~~{entity.text}~~",
-        "underline": f"++{entity.text}++",
-    }
-    return entity_type_mapping.get(entity.type)
+    def create_header(self, post, next_file, prev_file):
+        time_format = "%b %d, %Y %I:%M %p"
+        date_str = datetime.strptime(post['date'], self.date_format).strftime(time_format)
+        header = f"---\nDate: {date_str}"
 
-def format_blockquote(entity_text):
-    lines = entity_text.splitlines()  # Разбиваем текст на строки
-    formatted_text = "\n".join([f"> {line}" for line in lines])  # Добавляем ">" перед каждой строкой
-    return formatted_text
+        if post.get('hash_tags'):
+            header += "\ntags:\n" + "\n".join(f"  - {tag}" for tag in post['hash_tags'])
 
-def main(input_dir: Path = Path("input"), output_dir: Path = Path("output")):
-    # Копируем папки из input в output
-    copy_folders(input_dir, output_dir)
+        if post.get('geo'):
+            geo = post['geo']
+            header += f"\nLocation: [Open map](https://maps.google.com/?q={geo['latitude']},{geo['longitude']})"
 
-    # Загружаем JSON из файла result.json
-    with open(input_dir / "result.json", "r") as json_file:
-        json_data = json_file.read()
+        if prev_file:
+            header += f'\nBack: "[[{prev_file}]]"'
+        if next_file:
+            header += f'\nNext: "[[{next_file}]]"'
 
-    # Обрабатываем JSON и сохраняем результаты в output
-    process(json_data, output_dir)
+        return header + "\n---"
+
+    def get_file_name(self, message):
+        date_obj = parser.parse(message['date'])
+        return date_obj.strftime(self.file_date_format) + ".md"
+
+def main():
+    input_folder = "input"
+    output_folder = "output"
+
+    export = TelegramExport()
+    export.copy_folders(input_folder, output_folder)
+
+    with open(os.path.join(input_folder, "result.json"), "r") as f:
+        json_data = json.load(f)
+
+    posts = export.get_posts(json_data)
+    export.save_posts(posts, output_folder)
 
 if __name__ == "__main__":
     main()
