@@ -1,3 +1,20 @@
+package com.isidroid.c23
+
+import com.google.gson.Gson
+import com.google.gson.GsonBuilder
+import com.google.gson.annotations.SerializedName
+import com.isidroid.utils.fileNameExtension
+import com.isidroid.utils.fromJson
+import com.isidroid.utils.saveString
+import org.junit.Test
+import java.io.File
+import java.text.DateFormat
+import java.time.Month
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Calendar
+import java.util.Date
+import java.util.concurrent.TimeUnit
 
 class TelegramExport2ObsidianTest {
     @Test
@@ -132,7 +149,6 @@ class TelegramExport {
             val hashTags = message.entities?.filter { it.type == "hashtag" }?.map { it.text.replace("#", "") }
             val post = TgPost(message.id, message.date, text.toString(), getFileName(message), hashTags, message.geo)
 
-
             result.add(post)
         }
 
@@ -166,12 +182,24 @@ class TelegramExport {
         if (!text.isNullOrBlank())
             result.appendLine(text)
 
-        val attach = photo ?: file
-        if (attach != null)
-            result.append("![]($attach)").appendLine()
+        val attach = (photo ?: file)?.let {
+            if (!it.contains("/")) return@let it
+            it.substring(it.lastIndexOf("/") + 1, it.length)
+        }
+
+        if (attach != null) {
+            val fileExtension = attach.fileNameExtension.lowercase()
+            val code = when (fileExtension) {
+                "m4v", "mp4", "mov", "ogg" -> "![[$attach]]"
+                "pdf" -> "[[$attach]]"
+                else -> "![]($attach)"
+            }
+            result.append(code).appendLine()
+        }
 
         return result.toString()
     }
+
 
     private fun createText(entity: TextEntityResponse): String? {
         return when (entity.type) {
