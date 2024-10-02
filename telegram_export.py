@@ -100,15 +100,30 @@ class TelegramExport:
         return self.create_text2(entities, message.get('photo'), message.get('file'))
 
     def create_text2(self, entities, photo, file):
-        # Добавим условие, которое игнорирует None и заменяет его на пустую строку
+        result = []
+    
+        # Соединяем текстовые сущности
         text = ''.join([self.create_text_entity(entity) or '' for entity in entities]).strip()
+        
+        if text:
+            result.append(text)
 
-        result = f"{text}\n" if text else ""
+        # Получаем вложение (photo или file) и обрабатываем его
         attach = photo or file
+        if attach and '/' in attach:
+            attach = attach[attach.rfind('/') + 1:]
+        
         if attach:
-            result += f"![]({attach})\n"
+            file_extension = attach.split('.')[-1].lower()
+            if file_extension in ["m4v", "mp4", "mov", "ogg"]:
+                code = f"![[{attach}]]"
+            elif file_extension == "pdf":
+                code = f"[[{attach}]]"
+            else:
+                code = f"![]({attach})"
+            result.append(code)
 
-        return result
+        return '\n'.join(result)
 
     def create_text_entity(self, entity):
         entity_type = entity['type']
