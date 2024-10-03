@@ -88,16 +88,27 @@ class TelegramExport:
         return posts
 
     def create_text(self, message):
-        entities = message.get('text_entities', [])
-
-        while entities and entities[-1].get('type') == "plain" and not entities[-1].get('text'):
-            entities.pop()
-
-        while entities and entities[-1].get('type') == "hashtag":
-            entities.pop()
-
-
+        entities = self.filter_text_entities(message.get('text_entities', []))
         return self.create_text2(entities, message.get('photo'), message.get('file'))
+
+    def filter_text_entities(self, entities):
+        list_entities = entities[:]  # Создаем копию списка
+
+        # Удаляем последний элемент, если это пустая plain-сущность
+        if list_entities and list_entities[-1].get('type') == "plain" and not list_entities[-1].get('text'):
+            list_entities.pop()
+
+        end = len(list_entities) - 1
+
+        # Удаляем все hashtag и пустые plain сущности с конца списка
+        while end >= 0:
+            item = list_entities[end]
+            is_exclude = item.get('type') == "hashtag" or (item.get('type') == "plain" and not item.get('text').strip())
+            if not is_exclude:
+                break
+            end -= 1
+
+        return list_entities[:end + 1]
 
     def create_text2(self, entities, photo, file):
         result = []
@@ -133,11 +144,9 @@ class TelegramExport:
         elif entity_type == "plain":
             return text
         elif entity_type == "blockquote":
-            return "> " + text.replace('\n', '\n> ')
-        elif entity_type == "pre":
-            return f"```\n{text}\n```"
-        elif entity_type == "spoiler":
-            return text
+            return "\n> " + text.replace('\n', '\n> ')
+        elif entity_type in ["pre", "code", "spoiler"]:
+            return f"\n```\n{text}\n```\n"
         elif entity_type == "text_link":
             return f"[{text}]({entity.get('href')})"
         elif entity_type == "italic":
