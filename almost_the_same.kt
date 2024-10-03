@@ -156,20 +156,27 @@ class TelegramExport {
     }
 
     private fun createText(message: MessageResponse): String? {
-        val entities = message.entities.orEmpty().toMutableList()
+        val entities = filterTextEntities(message.entities)
+        return createText2(entities, message.photo, message.file)
+    }
 
-        if (entities.lastOrNull()?.type == "plain" && entities.lastOrNull()?.text?.isEmpty() == true)
-            entities.removeLast()
+    private fun filterTextEntities(entities: List<TextEntityResponse>?): List<TextEntityResponse> {
+        val list = entities.orEmpty().toMutableList()
+        if (list.lastOrNull()?.type == "plain" && list.lastOrNull()?.text.isNullOrBlank())
+            list.removeLast()
 
-        while (true) {
-            if (entities.lastOrNull()?.type == "hashtag")
-                entities.removeLast()
-            else
+        var end = list.size - 1
+        while (end >= 0) {
+            val item = list[end]
+            val isExclude = item.type == "hashtag" || (item.type == "plain" && item.text.isBlank())
+            if (!isExclude)
                 break
+
+            end--
         }
 
 
-        return createText2(entities, message.photo, message.file)
+        return list.take(end + 1)
     }
 
     private fun createText2(entities: List<TextEntityResponse>, photo: String?, file: String?): String? {
@@ -205,9 +212,8 @@ class TelegramExport {
         return when (entity.type) {
             "hashtag" -> entity.text.replace("#", "")
             "plain" -> entity.text
-            "blockquote" -> "> ${entity.text}".replace("\n", "\n> ")
-            "pre" -> "```\n${entity.text}\n```"
-            "spoiler" -> entity.text
+            "blockquote" -> "\n> ${entity.text}".replace("\n", "\n> ")
+            "pre", "code", "spoiler" -> "\n```\n${entity.text}\n```\n"
             "text_link" -> "[${entity.text}](${entity.href})"
             "italic" -> "*${entity.text}*"
             "link" -> "[${entity.text}](${entity.text})"
