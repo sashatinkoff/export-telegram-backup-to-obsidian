@@ -12,8 +12,12 @@ const { merge3 } = require('./diff');
 // Ключи из ignore (настройка «Игнорировать атрибуты») из Telegram не добавляются вовсе
 function mergeAttrs(oursAttrs, freshAttrs, links, ignore) {
   const attrs = new Map(oursAttrs);
-  for (const [key, value] of freshAttrs) if (!attrs.has(key) && !(ignore && ignore.has(key.toLowerCase()))) attrs.set(key, value);
   const names = getLinkNames();
+  for (const [key, value] of freshAttrs) {
+    if (attrs.has(key) || (ignore && ignore.has(key.toLowerCase()))) continue;
+    if (key === names.date && attrs.has('Date')) continue; // у заметки дата под прежним именем: не дублируем
+    attrs.set(key, value);
+  }
   if (links.prev) attrs.set(names.prev, `"[[${links.prev}]]"`);
   if (links.next) attrs.set(names.next, `"[[${links.next}]]"`);
   return attrs;

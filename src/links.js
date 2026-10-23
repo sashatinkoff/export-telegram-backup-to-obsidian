@@ -8,15 +8,15 @@ const HEADER_PARSE_RE = /^---\s*([\s\S]+?)\s*---/;
 const HEADER_REPLACE_RE = /^---[\s\S]*?---/;
 // Имена атрибутов со ссылками на соседние заметки (настройки «Атрибут для ссылки назад / вперёд»).
 // Прежние имена Back / Next / Prev тоже считаются ссылками: при пересчёте они заменяются на настроенные.
-const DEFAULT_LINK_NAMES = { prev: 'Back', next: 'Next' };
+const DEFAULT_LINK_NAMES = { prev: 'Back', next: 'Next', date: 'Date' }; // date — имя атрибута с датой поста
 let linkNames = { ...DEFAULT_LINK_NAMES };
 const cleanName = (v, fallback) => {
   const s = String(v === undefined || v === null ? '' : v).trim().replace(/[:\n\r]/g, '');
   return s || fallback;
 };
-const setLinkNames = ({ prev, next } = {}) => {
-  linkNames = { prev: cleanName(prev, DEFAULT_LINK_NAMES.prev), next: cleanName(next, DEFAULT_LINK_NAMES.next) };
-  if (linkNames.prev === linkNames.next) linkNames = { ...DEFAULT_LINK_NAMES };
+const setLinkNames = ({ prev, next, date } = {}) => {
+  linkNames = { prev: cleanName(prev, DEFAULT_LINK_NAMES.prev), next: cleanName(next, DEFAULT_LINK_NAMES.next), date: cleanName(date, DEFAULT_LINK_NAMES.date) };
+  if (new Set([linkNames.prev, linkNames.next, linkNames.date]).size < 3) linkNames = { ...DEFAULT_LINK_NAMES };
 };
 const getLinkNames = () => linkNames;
 const isLinkKey = (key) => key === linkNames.prev || key === linkNames.next || key === 'Back' || key === 'Next' || key === 'Prev';
@@ -57,9 +57,22 @@ function parseAttributes(text) {
   return attributes;
 }
 
+// Порядок атрибутов в шапке: Date, ссылка назад, ссылка вперёд, tags, затем все остальные в прежнем порядке
+function orderedAttributes(attributes) {
+  const rank = (key) => {
+    const k = key.toLowerCase();
+    if (key === linkNames.date || k === 'date') return 0;
+    if (key === linkNames.prev) return 1;
+    if (key === linkNames.next) return 2;
+    if (k === 'tags') return 3;
+    return 4;
+  };
+  return [...attributes.entries()].map((e, i) => ({ e, i, r: rank(e[0]) })).sort((a, b) => a.r - b.r || a.i - b.i).map((x) => x.e);
+}
+
 function renderHeader(attributes) {
   let header = '---';
-  for (const [key, value] of attributes) {
+  for (const [key, value] of orderedAttributes(attributes)) {
     header += `\n${key}: `;
     if (key === 'tags') {
       for (const tag of value.split(',')) header += `\n  - ${tag.trim()}`;
@@ -87,7 +100,10 @@ function needsRecalc(text, isFirst, isLast) {
 }
 
 function createArgs(text, prevFile, nextFile) {
-  const args = parseAttributes(text);
+  let args = parseAttributes(text);
+  if (linkNames.date !== 'Date' && args.has('Date') && !args.has(linkNames.date)) { // прежнее имя «Date» заменяется настроенным, место в шапке сохраняется
+    args = new Map([...args].map(([k, v]) => [k === 'Date' ? linkNames.date : k, v]));
+  }
   if (prevFile) args.set(linkNames.prev, `"[[${path.basename(prevFile)}]]"`);
   if (nextFile) args.set(linkNames.next, `"[[${path.basename(nextFile)}]]"`);
   return args;
@@ -122,7 +138,7 @@ async function recalcLinks(folder, opts = {}) {
   await mapPool(files, concurrency, async (file, i) => {
     const prev = i > 0 ? files[i - 1] : null;
     const next = i < last ? files[i + 1] : null;
-    const sig = sha(`${prev ? path.basename(prev) : ''}|${next ? path.basename(next) : ''}|${linkNames.prev}|${linkNames.next}`);
+    const sig = sha(`${prev ? path.basename(prev) : ''}|${next ? path.basename(next) : ''}|${linkNames.prev}|${linkNames.next}|${linkNames.date}|v2`); // v2: порядок атрибутов в шапке; при смене порядка файлы перечитываются
 
     let st = null;
     const known = cache ? cache.lookup(file) : null;
@@ -158,7 +174,7 @@ async function recalcLinks(folder, opts = {}) {
 }
 
 module.exports = {
-  setLinkNames, getLinkNames, DEFAULT_LINK_NAMES,
+  setLinkNames, getLinkNames, DEFAULT_LINK_NAMES, orderedAttributes,
   HEADER_PARSE_RE, HEADER_REPLACE_RE, parseAttributes, renderHeader, updateText, needsRecalc, createArgs,
   collectMarkdownFiles, recalcLinks,
 };

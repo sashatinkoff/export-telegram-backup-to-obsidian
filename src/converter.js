@@ -447,12 +447,13 @@ class TelegramConverter {
 
   createHeader(post, nextFile, prevFile) {
     const dt = parseDate(post.date);
-    let header = `---\nDate: ${this.formatHeaderDate(dt)}`;
-    if (py(post.forwardedFrom)) header += `\nИсточник: ${post.forwardedFrom}`;
-    if (this.convertTags && post.hashTags.length) header += `\ntags: \n${post.hashTags.map((t) => `  - ${t}`).join('\n')}`; // «tags: » с пробелом — как у пересчёта ссылок, иначе он переписывал бы каждую новую заметку
     const names = getLinkNames();
+    let header = `---\n${names.date}: ${this.formatHeaderDate(dt)}`;
+    // Порядок как у пересчёта ссылок (links.orderedAttributes): Date, назад, вперёд, tags, остальное
     if (prevFile) header += `\n${names.prev}: "[[${prevFile}]]"`;
     if (nextFile) header += `\n${names.next}: "[[${nextFile}]]"`;
+    if (this.convertTags && post.hashTags.length) header += `\ntags: \n${post.hashTags.map((t) => `  - ${t}`).join('\n')}`; // «tags: » с пробелом — как у пересчёта ссылок, иначе он переписывал бы каждую новую заметку
+    if (py(post.forwardedFrom)) header += `\nИсточник: ${post.forwardedFrom}`;
     return `${header}\n---`;
   }
 

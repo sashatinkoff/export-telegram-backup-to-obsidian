@@ -1,7 +1,7 @@
 'use strict';
 
-const BUILD = '0.5.0 · 2026-10-22';
-const VERSION = '0.5.0';
+const BUILD = '0.5.2 · 2026-10-22';
+const VERSION = '0.5.2';
 
 const VIEW_DASHBOARD = 'telegram-import-dashboard';
 const VIEW_REVIEW = 'telegram-import-review';
@@ -11,6 +11,7 @@ const DEFAULT_SETTINGS = {
   askArchiveEachTime: true,       // на панели импорта нужно подтвердить папку архива; иначе импорт стартует сразу
   targetFolder: 'Telegram',       // папка в хранилище, куда попадает результат экспорта; пусто = корень хранилища
   recalcFolder: '',               // папка пересчёта ссылок Back/Next; пусто = «<папка назначения>/notes»
+  dateAttrName: 'Date',           // имя YAML-атрибута с датой поста
   linkPrevName: 'Back',           // имя YAML-атрибута со ссылкой на предыдущую заметку
   linkNextName: 'Next',           // имя YAML-атрибута со ссылкой на следующую заметку
   recalcForce: true,              // пересчитывать все файлы, а не только те, где нет Back/Next

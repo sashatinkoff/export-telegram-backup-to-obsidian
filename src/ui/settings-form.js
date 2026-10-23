@@ -63,6 +63,9 @@ function renderSettingsForm(el, plugin, { redraw }) {
   new Setting(el).setName('Проверять каждую заметку на диске')
     .setDesc('По умолчанию заметки и ссылки, не менявшиеся с прошлого импорта (по дате и размеру файла), пропускаются без чтения. Включите, если файлы правят программы, не обновляющие дату изменения.')
     .addToggle((t) => t.setValue(s.verifyAll).onChange((v) => save('verifyAll', v)));
+  new Setting(el).setName('Атрибут с датой')
+    .setDesc('Имя YAML-атрибута с датой поста в новых заметках. По умолчанию Date. У существующих заметок при пересчёте ссылок прежнее имя Date заменяется настроенным.')
+    .addText((t) => t.setPlaceholder('Date').setValue(s.dateAttrName || 'Date').onChange((v) => save('dateAttrName', v.trim().replace(/[:\s]+/g, '_') || 'Date')));
   new Setting(el).setName('Атрибут со ссылкой назад')
     .setDesc('Имя YAML-атрибута, в который при пересчёте пишется ссылка на предыдущую заметку. По умолчанию Back. Прежние Back, Next и Prev заменяются настроенными именами.')
     .addText((t) => t.setPlaceholder('Back').setValue(s.linkPrevName || 'Back').onChange((v) => save('linkPrevName', v.trim().replace(/[:\s]+/g, '_') || 'Back')));
