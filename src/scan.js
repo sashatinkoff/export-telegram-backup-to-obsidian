@@ -1,12 +1,10 @@
 'use strict';
 // Быстрый осмотр источника перед импортом: что внутри архива (сообщения, медиа, размер).
-const fs = require('fs');
-const path = require('path');
+const { fsx, path } = require('./platform');
 const { scanArchive } = require('./media');
 const { mapPool } = require('./util');
 const zip = require('./zip');
 
-const fsp = fs.promises;
 
 function emptyContent() {
   return { text: 0, photos: 0, videos: 0, voice: 0, audio: 0, files: 0, links: 0 };
@@ -54,23 +52,23 @@ async function scanSource(source) {
   let exportedAt = 0;
   let zipInfo = null;
   if (source.kind === 'zip') {
-    const entries = await zip.listZip(source.path);
+    const entries = await zip.listZip(source);
     const found = zip.findResult(entries);
     if (!found) throw new Error('В ZIP-архиве нет result.json');
-    jsonText = await zip.readEntry(source.path, found.entry);
+    jsonText = await zip.readEntry(source, found.entry);
     const under = entries.filter((e) => !e.dir && e.name.startsWith(found.prefix) && !e.name.startsWith('__MACOSX/'));
     files = under.length - 1;
     bytes = under.reduce((s, e) => s + e.usize, 0) - found.entry.usize;
     exportedAt = found.entry.mtime.getTime();
-    zipInfo = { entries, prefix: found.prefix, size: (await fsp.stat(source.path)).size };
+    zipInfo = { entries, prefix: found.prefix, size: source.file ? source.file.size : (await fsx.stat(source.path)).size };
   } else {
     const jsonPath = path.join(source.path, 'result.json');
-    const st = await fsp.stat(jsonPath);
+    const st = await fsx.stat(jsonPath);
     exportedAt = st.mtimeMs;
-    jsonText = await fsp.readFile(jsonPath, 'utf8');
+    jsonText = await fsx.readFile(jsonPath, 'utf8');
     const { dirs } = await scanArchive(source.path);
     const flat = dirs.flatMap((d) => d.files.map((f) => path.join(source.path, d.rel, f)));
-    const stats = await mapPool(flat, 32, (f) => fsp.stat(f).catch(() => null));
+    const stats = await mapPool(flat, 32, (f) => fsx.stat(f).catch(() => null));
     files = flat.length;
     bytes = stats.reduce((s, x) => s + (x ? x.size : 0), 0);
   }

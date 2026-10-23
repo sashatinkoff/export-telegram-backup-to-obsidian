@@ -1,11 +1,11 @@
 'use strict';
 // Синхронизация одной заметки с версией из Telegram: что записать, что оставить, что отправить на сравнение.
+const { fsx } = require('./platform');
 const { splitNote, renderNote, lineKey } = require('./text');
-const fs = require('fs');
 const { sha, readOrNull, writeText } = require('./util');
+const { getLinkNames } = require('./links');
 
-const fsp = fs.promises;
-const statOrNull = (file) => fsp.stat(file).catch(() => null);
+const statOrNull = (file) => fsx.stat(file).catch(() => null);
 const { merge3 } = require('./diff');
 
 // Атрибуты существующей заметки не трогаем; из Telegram добавляем только те ключи, которых у вас нет
@@ -13,8 +13,9 @@ const { merge3 } = require('./diff');
 function mergeAttrs(oursAttrs, freshAttrs, links, ignore) {
   const attrs = new Map(oursAttrs);
   for (const [key, value] of freshAttrs) if (!attrs.has(key) && !(ignore && ignore.has(key.toLowerCase()))) attrs.set(key, value);
-  if (links.prev) attrs.set('Back', `"[[${links.prev}]]"`);
-  if (links.next) attrs.set('Next', `"[[${links.next}]]"`);
+  const names = getLinkNames();
+  if (links.prev) attrs.set(names.prev, `"[[${links.prev}]]"`);
+  if (links.next) attrs.set(names.next, `"[[${links.next}]]"`);
   return attrs;
 }
 

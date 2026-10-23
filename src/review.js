@@ -1,15 +1,13 @@
 'use strict';
 // Очередь заметок на сравнение: у заметки с таким же именем в хранилище другой текст, чем в Telegram.
 // Версии из Telegram лежат в папке merge_conflicts, рядом с ними — markdown-отчёт.
-const fs = require('fs');
-const path = require('path');
+const { fsx, path } = require('./platform');
 const { lineKey, splitNote, contentKey } = require('./text');
 const { diffOps } = require('./diff');
 const { sha, readOrNull, writeText, removeIfExists, mapPool, tick } = require('./util');
 const { buildReport } = require('./report');
 const { JsonStore } = require('./store');
 
-const fsp = fs.promises;
 
 const QUEUE_VERSION = 1;
 const REPORT_NAME = 'Отчёт о конфликтах.md';
@@ -188,7 +186,7 @@ class Review {
     const items = this.list();
     if (!items.length) {
       await removeIfExists(file);
-      try { await fsp.rmdir(path.dirname(file)); } catch (e) { /* папка не пуста или её нет */ }
+      try { await fsx.rmdir(path.dirname(file)); } catch (e) { /* папка не пуста или её нет */ }
       return;
     }
 

@@ -1,7 +1,8 @@
 'use strict';
 // Конвертер экспорта Telegram: result.json -> посты -> markdown-заметки.
 const { py, isDict, pad2, parseDate, formatDate, MONTHS_RU_GENITIVE, MONTHS_EN } = require('./util');
-const path = require('path');
+const { path } = require('./platform');
+const { getLinkNames } = require('./links');
 
 class TelegramConverter {
   constructor({ yandexApiKey = '', dateFormat = '', threshold = 120, convertTags = true } = {}) {
@@ -449,8 +450,9 @@ class TelegramConverter {
     let header = `---\nDate: ${this.formatHeaderDate(dt)}`;
     if (py(post.forwardedFrom)) header += `\nИсточник: ${post.forwardedFrom}`;
     if (this.convertTags && post.hashTags.length) header += `\ntags: \n${post.hashTags.map((t) => `  - ${t}`).join('\n')}`; // «tags: » с пробелом — как у пересчёта ссылок, иначе он переписывал бы каждую новую заметку
-    if (prevFile) header += `\nBack: "[[${prevFile}]]"`;
-    if (nextFile) header += `\nNext: "[[${nextFile}]]"`;
+    const names = getLinkNames();
+    if (prevFile) header += `\n${names.prev}: "[[${prevFile}]]"`;
+    if (nextFile) header += `\n${names.next}: "[[${nextFile}]]"`;
     return `${header}\n---`;
   }
 

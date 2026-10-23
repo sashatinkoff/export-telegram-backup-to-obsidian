@@ -1,6 +1,6 @@
 'use strict';
 // Системный диалог выбора папки (Electron). Возвращает путь или null.
-const path = require('path');
+const { path } = require('../platform');
 
 async function pickFolder() {
   try {
@@ -56,6 +56,18 @@ async function pickFile(extensions = ['zip']) {
   });
 }
 
+// Выбор файла как объекта File (телефон): читается кусками, без пути на диске. Возвращает File или null.
+function pickFileObject(extensions = ['zip']) {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = extensions.map((e) => `.${e}`).join(',');
+    input.onchange = () => resolve((input.files && input.files[0]) || null);
+    input.oncancel = () => resolve(null);
+    input.click();
+  });
+}
+
 // Путь файла из браузерного File (Electron даёт его через file.path или webUtils)
 function pathOfFile(file) {
   if (!file) return null;
@@ -66,4 +78,4 @@ function pathOfFile(file) {
   return file.path || null;
 }
 
-module.exports = { pickFolder, pickFile, pathOfFile };
+module.exports = { pickFolder, pickFile, pickFileObject, pathOfFile };

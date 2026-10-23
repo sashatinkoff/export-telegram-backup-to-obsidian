@@ -1,8 +1,7 @@
 'use strict';
 // Плагин Obsidian «Telegram Import»: импорт архива Telegram в заметки одной командой.
-const path = require('path');
-const fs = require('fs');
-const { Plugin, Notice } = require('obsidian');
+const { fsx, path, vaultBase, init: initPlatform } = require('./platform');
+const { Plugin, Notice, Platform } = require('obsidian');
 const { DEFAULT_SETTINGS, VIEW_DASHBOARD } = require('./constants');
 const { NoteIndex, Originals, History } = require('./store');
 const { Review } = require('./review');
@@ -10,11 +9,11 @@ const { runImport, runRecalc, emptyStats } = require('./importer');
 const { scanSource } = require('./scan');
 const { resolveInVault, throttle, setGate, targetRel } = require('./util');
 const { setFormatMatching } = require('./media');
+const { setLinkNames } = require('./links');
 const { buildHistoryReport } = require('./report');
 const shellModule = require('./ui/shell-view');
 const settingsModule = require('./ui/settings-tab');
 
-const fsp = fs.promises;
 const LOG_LIMIT = 300;
 const STAGE_WEIGHT = { unpack: 0.15, copy: 0.3, notes: 0.35, links: 0.15, review: 0.05 };
 
@@ -37,6 +36,7 @@ function newRunState() {
 
 module.exports = class TelegramImportPlugin extends Plugin {
   async onload() {
+    initPlatform(this.app, this.manifest.dir);
     await this.loadSettings();
     this.state = newRunState();
     this.listeners = new Set();
@@ -75,9 +75,9 @@ module.exports = class TelegramImportPlugin extends Plugin {
     this.addCommand({ id: 'review-conflicts', name: 'Разобрать конфликты слияния (сравнение side by side)', callback: () => this.openReview() });
     this.addRibbonIcon('send', 'Импорт из Telegram', () => this.openTab('import'));
 
-    this.statusEl = this.addStatusBarItem();
-    if (this.statusEl.addEventListener) this.statusEl.addEventListener('click', () => this.openTab(this.review.count && !this.state.running ? 'conflicts' : 'import'));
-    if (this.statusEl.addClass) this.statusEl.addClass('mod-clickable');
+    try { this.statusEl = this.addStatusBarItem(); } catch (e) { this.statusEl = null; } // на телефоне строки состояния нет
+    if (this.statusEl && this.statusEl.addEventListener) this.statusEl.addEventListener('click', () => this.openTab(this.review.count && !this.state.running ? 'conflicts' : 'import'));
+    if (this.statusEl && this.statusEl.addClass) this.statusEl.addClass('mod-clickable');
     this.subscribe(() => this.updateStatusBar());
   }
 
@@ -92,17 +92,18 @@ module.exports = class TelegramImportPlugin extends Plugin {
     delete saved.conflicts; // поле прежних версий
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
     setFormatMatching(this.settings.ignoreMediaFormat);
+    setLinkNames({ prev: this.settings.linkPrevName, next: this.settings.linkNextName });
     if (this.settings.recalcFolder === 'Telegram/notes') this.settings.recalcFolder = ''; // прежнее значение по умолчанию -> «автоматически»
   }
 
-  async saveSettings() { setFormatMatching(this.settings.ignoreMediaFormat); await this.saveData(this.settings); }
+  async saveSettings() { setFormatMatching(this.settings.ignoreMediaFormat); setLinkNames({ prev: this.settings.linkPrevName, next: this.settings.linkNextName }); await this.saveData(this.settings); }
 
-  vaultBase() { return this.app.vault.adapter.getBasePath(); }
+  vaultBase() { return vaultBase(this.app); }
 
   async loadStores() {
     await Promise.all([this.index.load(), this.history.load(), this.review.load(), this.originals.load()]);
     if (this.index.fresh) await this.originals.clear(); // формат индекса сменился: старые «оригиналы» не подходят
-    await fsp.rm(path.join(this.pluginDir, 'base'), { recursive: true, force: true }); // папка прежних версий
+    await fsx.rm(path.join(this.pluginDir, 'base'), { recursive: true, force: true }); // папка прежних версий
     this.updateStatusBar();
     this.notify();
   }
@@ -242,7 +243,7 @@ module.exports = class TelegramImportPlugin extends Plugin {
     const source = typeof sourceArg === 'string' || !sourceArg
       ? { kind: this.settings.sourceKind || 'folder', path: sourceArg || this.settings.archiveFolder }
       : sourceArg;
-    this.settings.archiveFolder = source.path;
+    if (!source.file) this.settings.archiveFolder = source.path; // выбранный через диалог File пути на диске не имеет
     this.settings.sourceKind = source.kind;
     await this.saveSettings();
     this.beginRun('import', source);
@@ -293,6 +294,10 @@ module.exports = class TelegramImportPlugin extends Plugin {
     }
     const record = await this.endRun(result, error);
     if (error) new Notice(`Telegram: ошибка\n${record.error}`, 10000);
+    else if (result && result.stats && result.stats.links) {
+      const l = result.stats.links;
+      new Notice(`Telegram: ссылки Back/Next ${result.status === 'cancelled' ? 'остановлены' : 'пересчитаны'}\nобновлено ${l.changed} из ${l.total}`);
+    }
     return record;
   }
 
@@ -358,7 +363,7 @@ module.exports = class TelegramImportPlugin extends Plugin {
   // Открывает окно плагина на нужной вкладке: import | conflicts | history | settings
   async openTab(tab) {
     this.uiTab = tab;
-    if (this.settings.fullscreen !== false) this.hideSidebars();
+    if (this.settings.fullscreen !== false && !Platform.isMobile) this.hideSidebars();
     const leaf = await this.openView(VIEW_DASHBOARD);
     this.notify();
     if (leaf && leaf.view && leaf.view.setTab) leaf.view.setTab(tab);
@@ -410,8 +415,8 @@ module.exports = class TelegramImportPlugin extends Plugin {
   async exportHistoryReport() {
     const rel = [targetRel(this.settings), 'Отчёт об импортах.md'].filter(Boolean).join('/');
     const abs = path.join(this.vaultBase(), ...rel.split('/'));
-    await fsp.mkdir(path.dirname(abs), { recursive: true });
-    await fsp.writeFile(abs, buildHistoryReport(this.history.runs, this.history.totals()), 'utf8');
+    await fsx.mkdir(path.dirname(abs), { recursive: true });
+    await fsx.writeFile(abs, buildHistoryReport(this.history.runs, this.history.totals()), 'utf8');
     new Notice(`Telegram: отчёт сохранён\n${rel}`);
     await this.openNote(rel);
   }

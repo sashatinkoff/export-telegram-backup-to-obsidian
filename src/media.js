@@ -1,10 +1,8 @@
 'use strict';
 // Копирование файлов архива (фото, видео, документы) в хранилище. Ничего не перезаписывает.
-const fs = require('fs');
-const path = require('path');
+const { path, fsx, isNative, nodeFs } = require('./platform');
 const { mapPool } = require('./util');
 
-const fsp = fs.promises;
 
 const STAT_CONCURRENCY = 32;
 const COPY_CONCURRENCY = 8;
@@ -42,8 +40,14 @@ function mediaKey(fileName) {
 
 // Побайтовое сравнение двух файлов (вызывается только для файлов одинакового размера)
 async function sameContent(fileA, fileB) {
+  if (!isNative) { // телефон: файлы читаются целиком
+    const [a, b] = [await fsx.readBytes(fileA), await fsx.readBytes(fileB)];
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
   const CHUNK = 1024 * 1024;
-  const [ha, hb] = [await fsp.open(fileA, 'r'), await fsp.open(fileB, 'r')];
+  const [ha, hb] = [await nodeFs.promises.open(fileA, 'r'), await nodeFs.promises.open(fileB, 'r')];
   try {
     const bufA = Buffer.allocUnsafe(CHUNK);
     const bufB = Buffer.allocUnsafe(CHUNK);
@@ -64,7 +68,7 @@ async function scanArchive(src) {
   const dirs = [];
   let total = 0;
   const walk = async (rel) => {
-    const entries = await fsp.readdir(path.join(src, rel), { withFileTypes: true });
+    const entries = await fsx.readdir(path.join(src, rel), { withFileTypes: true });
     const files = [];
     const subdirs = [];
     for (const e of entries) {
@@ -101,10 +105,10 @@ async function copyArchive(src, dst, hooks = {}) {
     if (hooks.isCancelled && hooks.isCancelled()) break;
     const srcDir = path.join(src, rel);
     const dstDir = path.join(dst, rel);
-    await fsp.mkdir(dstDir, { recursive: true });
+    await fsx.mkdir(dstDir, { recursive: true });
     if (!files.length) continue;
 
-    const dstNames = await fsp.readdir(dstDir);
+    const dstNames = await fsx.readdir(dstDir);
     const existingNames = new Set();
     const existingKeys = new Set();
     for (const name of dstNames) {
@@ -124,13 +128,13 @@ async function copyArchive(src, dst, hooks = {}) {
     if (!candidates.length) continue;
 
     // 2. размеры файлов-кандидатов и уже лежащих в хранилище (параллельно)
-    const srcStats = await mapPool(candidates, STAT_CONCURRENCY, (name) => fsp.stat(path.join(srcDir, name)).catch(() => null));
+    const srcStats = await mapPool(candidates, STAT_CONCURRENCY, (name) => fsx.stat(path.join(srcDir, name)).catch(() => null));
     const sizeIndex = new Map(); // размер -> пути файлов, с которыми сравниваем содержимое
     const addSize = (size, file) => {
       if (!sizeIndex.has(size)) sizeIndex.set(size, []);
       sizeIndex.get(size).push(file);
     };
-    const dstStats = await mapPool(dstNames, STAT_CONCURRENCY, (name) => fsp.stat(path.join(dstDir, name)).catch(() => null));
+    const dstStats = await mapPool(dstNames, STAT_CONCURRENCY, (name) => fsx.stat(path.join(dstDir, name)).catch(() => null));
     dstNames.forEach((name, i) => { if (dstStats[i] && dstStats[i].isFile()) addSize(dstStats[i].size, path.join(dstDir, name)); });
 
     // 3. решения принимаются по порядку, чтобы дубликаты внутри самого архива тоже находились
@@ -163,8 +167,8 @@ async function copyArchive(src, dst, hooks = {}) {
       const from = path.join(srcDir, name);
       const to = path.join(dstDir, name);
       try {
-        await fsp.copyFile(from, to, fs.constants.COPYFILE_EXCL);
-        await fsp.utimes(to, st.atime, st.mtime);
+        await fsx.copyFile(from, to);
+        await fsx.utimes(to, st.atime, st.mtime).catch(() => {});
         stats.copied++;
         stats.bytes += st.size;
       } catch (e) {

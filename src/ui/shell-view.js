@@ -1,6 +1,6 @@
 'use strict';
 // Окно плагина: шапка, вкладки (Новый импорт, Конфликты записей, История и инфографика, Настройки) и подвал.
-const { ItemView } = require('obsidian');
+const { ItemView, Platform } = require('obsidian');
 const { VIEW_DASHBOARD, VERSION } = require('../constants');
 const { icon } = require('./dom');
 const { ImportTab } = require('./tab-import');
@@ -82,6 +82,7 @@ class ImporterView extends ItemView {
     this.fsBtn = tools.createEl('button', { cls: 'tgi-iconbtn' });
     this.fsBtn.addEventListener('click', () => this.toggleFullscreen());
     this.paintFullscreenButton();
+    if (Platform.isMobile) this.fsBtn.addClass('tgi-hidden');
     const help = tools.createEl('button', { cls: 'tgi-iconbtn', attr: { title: 'Инструкция', 'aria-label': 'Инструкция' } });
     icon(help, 'help-circle');
     help.addEventListener('click', () => this.setTab('settings'));

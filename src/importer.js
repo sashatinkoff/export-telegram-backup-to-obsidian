@@ -1,8 +1,6 @@
 'use strict';
 // Конвейер импорта: файлы архива -> заметки -> ссылки Back/Next -> сравнение заметок с одинаковыми именами.
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const { fsx, path } = require('./platform');
 const { TelegramConverter } = require('./converter');
 const { copyArchive } = require('./media');
 const { recalcLinks } = require('./links');
@@ -12,7 +10,6 @@ const zip = require('./zip');
 const { getGate } = require('./util');
 const { mapPool, tick, resolveInVault, toKey, sha, recalcRel } = require('./util');
 
-const fsp = fs.promises;
 const NOTE_CONCURRENCY = 16;
 
 const emptyStats = () => ({
@@ -22,9 +19,9 @@ const emptyStats = () => ({
 });
 
 // Папка для пересчёта ссылок должна существовать
-function resolveRecalcDir(vaultBase, settings) {
+async function resolveRecalcDir(vaultBase, settings) {
   const dir = resolveInVault(vaultBase, recalcRel(settings), 'Папка для пересчёта ссылок');
-  if (!fs.existsSync(dir)) throw new Error(`Нет папки для пересчёта ссылок: ${dir}`);
+  if (!(await fsx.exists(dir))) throw new Error(`Нет папки для пересчёта ссылок: ${dir}`);
   return dir;
 }
 
@@ -39,13 +36,13 @@ async function runImport(env) {
   const hooks = env.hooks || {};
   const stage = (name, patch) => { if (hooks.stage) hooks.stage(name, patch); };
   stage('unpack', { state: 'running', done: 0, total: 0, label: 'чтение каталога ZIP…' });
-  const entries = (prescan && prescan.zipInfo && prescan.zipInfo.entries) || await zip.listZip(source.path);
+  const entries = (prescan && prescan.zipInfo && prescan.zipInfo.entries) || await zip.listZip(source);
   const found = zip.findResult(entries);
   if (!found) throw new Error('В ZIP-архиве нет result.json');
-  const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'telegram-import-'));
+  const tmp = await fsx.makeTemp('telegram-import-');
   try {
     if (hooks.log) hooks.log(`ZIP распаковывается во временную папку ${tmp}`);
-    await zip.extractZip(source.path, entries, found.prefix, tmp, {
+    await zip.extractZip(source, entries, found.prefix, tmp, {
       onProgress: (done, total, label) => stage('unpack', { done, total, label }),
       isCancelled: env.isCancelled,
       gate: getGate(),
@@ -57,7 +54,7 @@ async function runImport(env) {
     stage('unpack', { state: 'done', label: '' });
     return await runImportFrom({ ...env, archiveFolder: tmp, json: prescan && prescan.json });
   } finally {
-    await fsp.rm(tmp, { recursive: true, force: true }).catch(() => {});
+    await fsx.rm(tmp, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -74,7 +71,7 @@ async function runImportFrom(env) {
 
   if (!archiveFolder) throw new Error('Укажите папку с архивом Telegram');
   const jsonPath = path.join(archiveFolder, 'result.json');
-  if (!fs.existsSync(jsonPath)) throw new Error(`В папке архива нет result.json: ${archiveFolder}`);
+  if (!(await fsx.exists(jsonPath))) throw new Error(`В папке архива нет result.json: ${archiveFolder}`);
   const target = resolveInVault(vaultBase, settings.targetFolder, 'Папка назначения');
   resolveInVault(vaultBase, settings.conflictsFolder || 'merge_conflicts', 'Папка конфликтов');
 
@@ -100,7 +97,7 @@ async function runImportFrom(env) {
   stage('notes', { state: 'running', done: 0, total: 0, label: 'чтение result.json…' });
   let json = env.json;
   if (!json) {
-    const raw = await fsp.readFile(jsonPath, 'utf8');
+    const raw = await fsx.readFile(jsonPath, 'utf8');
     json = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
   }
   meta = { chat: chatInfo(json), content: countContent(json).counts, messages: (json.messages || []).length };
@@ -145,7 +142,7 @@ async function runImportFrom(env) {
 
   // ---- 3. ссылки Back/Next
   stage('links', { state: 'running', done: 0, total: 0, label: '' });
-  const recalcDir = resolveRecalcDir(vaultBase, settings);
+  const recalcDir = await resolveRecalcDir(vaultBase, settings);
   const rs = await recalcLinks(recalcDir, {
     force: settings.recalcForce,
     cache: linkCache(env),
@@ -195,7 +192,7 @@ async function runRecalc(env) {
   const stats = emptyStats();
 
   stage('links', { state: 'running', done: 0, total: 0, label: '' });
-  const recalcDir = resolveRecalcDir(vaultBase, settings);
+  const recalcDir = await resolveRecalcDir(vaultBase, settings);
   const rs = await recalcLinks(recalcDir, {
     force: settings.recalcForce,
     cache: linkCache(env),

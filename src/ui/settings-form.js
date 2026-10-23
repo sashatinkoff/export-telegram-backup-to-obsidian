@@ -4,6 +4,7 @@ const { Setting } = require('obsidian');
 const { pickFolder, pickFile } = require('./pick-folder');
 const { renderAttrPicker } = require('./attr-picker');
 const { renderFolderInput } = require('./folder-input');
+const { isNative } = require('../platform');
 
 function renderSettingsForm(el, plugin, { redraw }) {
   const s = plugin.settings;
@@ -13,10 +14,10 @@ function renderSettingsForm(el, plugin, { redraw }) {
   group('Источник и папки');
   new Setting(el)
     .setName('Папка или ZIP с экспортом Telegram')
-    .setDesc('Где лежит result.json (или ZIP с ним). Меняется и в окне «Новый импорт».')
+    .setDesc(isNative ? 'Где лежит result.json (или ZIP с ним). Меняется и в окне «Новый импорт».' : 'Папка внутри хранилища, где лежит result.json (или ZIP в хранилище). ZIP из «Файлов» выбирается в окне «Новый импорт».')
     .addText((t) => t.setPlaceholder('/путь/к/ChatExport').setValue(s.archiveFolder).onChange((v) => save('archiveFolder', v.trim())))
-    .addButton((b) => b.setButtonText('Папка…').onClick(async () => { const d = await pickFolder(); if (d) { s.sourceKind = 'folder'; await save('archiveFolder', d); redraw(); } }))
-    .addButton((b) => b.setButtonText('ZIP…').onClick(async () => { const d = await pickFile(['zip']); if (d) { s.sourceKind = 'zip'; await save('archiveFolder', d); redraw(); } }));
+    .addButton((b) => { if (!isNative) b.buttonEl.addClass('tgi-hidden'); return b.setButtonText('Папка…').onClick(async () => { const d = await pickFolder(); if (d) { s.sourceKind = 'folder'; await save('archiveFolder', d); redraw(); } }); })
+    .addButton((b) => { if (!isNative) b.buttonEl.addClass('tgi-hidden'); return b.setButtonText('ZIP…').onClick(async () => { const d = await pickFile(['zip']); if (d) { s.sourceKind = 'zip'; await save('archiveFolder', d); redraw(); } }); });
   new Setting(el)
     .setName('Подтверждать источник в окне импорта')
     .setDesc('Выключено: команда «Импорт из Telegram» сразу запускает импорт с сохранённым источником.')
@@ -62,6 +63,12 @@ function renderSettingsForm(el, plugin, { redraw }) {
   new Setting(el).setName('Проверять каждую заметку на диске')
     .setDesc('По умолчанию заметки и ссылки, не менявшиеся с прошлого импорта (по дате и размеру файла), пропускаются без чтения. Включите, если файлы правят программы, не обновляющие дату изменения.')
     .addToggle((t) => t.setValue(s.verifyAll).onChange((v) => save('verifyAll', v)));
+  new Setting(el).setName('Атрибут со ссылкой назад')
+    .setDesc('Имя YAML-атрибута, в который при пересчёте пишется ссылка на предыдущую заметку. По умолчанию Back. Прежние Back, Next и Prev заменяются настроенными именами.')
+    .addText((t) => t.setPlaceholder('Back').setValue(s.linkPrevName || 'Back').onChange((v) => save('linkPrevName', v.trim().replace(/[:\s]+/g, '_') || 'Back')));
+  new Setting(el).setName('Атрибут со ссылкой вперёд')
+    .setDesc('Имя YAML-атрибута для ссылки на следующую заметку. По умолчанию Next.')
+    .addText((t) => t.setPlaceholder('Next').setValue(s.linkNextName || 'Next').onChange((v) => save('linkNextName', v.trim().replace(/[:\s]+/g, '_') || 'Next')));
   new Setting(el).setName('Пересчитывать все файлы').setDesc('Выключено: файлы, где уже есть Back/Next, пропускаются.')
     .addToggle((t) => t.setValue(s.recalcForce).onChange((v) => save('recalcForce', v)));
 
@@ -77,7 +84,7 @@ function renderSettingsForm(el, plugin, { redraw }) {
     .addText((t) => { t.inputEl.type = 'password'; t.setValue(s.yandexApiKey).onChange((v) => save('yandexApiKey', v.trim())); });
 
   group('Оформление');
-  new Setting(el).setName('Открывать на всю рабочую область').setDesc('Боковые панели сворачиваются, пока открыто окно плагина, и возвращаются при его закрытии. Настоящий полноэкранный режим: кнопка в шапке окна.')
+  if (isNative) new Setting(el).setName('Открывать на всю рабочую область').setDesc('Боковые панели сворачиваются, пока открыто окно плагина, и возвращаются при его закрытии. Настоящий полноэкранный режим: кнопка в шапке окна.')
     .addToggle((t) => t.setValue(s.fullscreen !== false).onChange((v) => save('fullscreen', v)));
   new Setting(el).setName('Тема окна импорта').setDesc('Как в Obsidian, тёмная или светлая.')
     .addDropdown((d) => d.addOptions({ auto: 'Как в Obsidian', dark: 'Тёмная', light: 'Светлая' }).setValue(s.theme || 'auto').onChange(async (v) => {

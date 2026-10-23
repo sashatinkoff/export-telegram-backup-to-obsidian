@@ -4,7 +4,8 @@ const { TelegramConverter } = require('../converter');
 const { targetRel, targetLabel } = require('../util');
 const { h, icon, button, checkbox } = require('./dom');
 const { fmtNum, plural, fmtDuration, fmtTime, fmtBytes, fmtDate } = require('./format');
-const { pickFolder, pickFile, pathOfFile } = require('./pick-folder');
+const { pickFolder, pickFile, pickFileObject, pathOfFile } = require('./pick-folder');
+const { isNative } = require('../platform');
 
 const STAGE_SHORT = { unpack: 'Распаковка', copy: 'Файлы', notes: 'Заметки', links: 'Ссылки', review: 'Сравнение' };
 const STAGE_ICON = { idle: 'circle', running: 'loader', done: 'check-circle-2', cancelled: 'x-circle', error: 'alert-triangle', skipped: 'minus-circle' };
@@ -89,7 +90,19 @@ class ImportTab {
     if (st.status === 'idle' || !st.source || st.source.path !== this.source.path) this.plugin.scan(this.source);
   }
 
+  // Телефон: ZIP выбирается системным диалогом (файл читается кусками), папка и ZIP внутри хранилища вводятся путём
+  chooseFile(file) {
+    this.source = { kind: 'zip', path: file.name, file };
+    this.mode = 'zip';
+    this.plugin.scan(this.source);
+    this.renderSource();
+  }
+
   async pick() {
+    if (!isNative) {
+      if (this.mode === 'zip') { const f = await pickFileObject(['zip']); if (f) this.chooseFile(f); } else this.input.focus();
+      return;
+    }
     const p = this.mode === 'zip' ? await pickFile(['zip']) : await pickFolder();
     if (p) this.choose(p);
   }
@@ -121,9 +134,14 @@ class ImportTab {
     const drop = (this.drop = c.createDiv({ cls: 'tgi-drop' }));
     const cloud = drop.createDiv({ cls: 'tgi-drop-ico' });
     icon(cloud, 'cloud-upload');
-    drop.createDiv({ cls: 'tgi-drop-title', text: this.mode === 'zip' ? 'Перетащите ZIP-архив с экспортом сюда' : 'Перетащите папку с экспортом сюда' });
-    drop.createDiv({ cls: 'tgi-drop-title', text: 'или выберите на диске' });
-    drop.createDiv({ cls: 'tgi-mono tgi-faint tgi-small', text: 'Поддерживаются: result.json, папки экспорта, архивы .zip (в том числе больше 4 ГБ)' });
+    if (isNative) {
+      drop.createDiv({ cls: 'tgi-drop-title', text: this.mode === 'zip' ? 'Перетащите ZIP-архив с экспортом сюда' : 'Перетащите папку с экспортом сюда' });
+      drop.createDiv({ cls: 'tgi-drop-title', text: 'или выберите на диске' });
+      drop.createDiv({ cls: 'tgi-mono tgi-faint tgi-small', text: 'Поддерживаются: result.json, папки экспорта, архивы .zip (в том числе больше 4 ГБ)' });
+    } else {
+      drop.createDiv({ cls: 'tgi-drop-title', text: this.mode === 'zip' ? 'Нажмите, чтобы выбрать ZIP-архив' : 'Введите путь к папке экспорта внутри хранилища' });
+      drop.createDiv({ cls: 'tgi-mono tgi-faint tgi-small', text: this.mode === 'zip' ? 'Архив читается с телефона прямо из «Файлов», копировать в хранилище не нужно' : 'Скопируйте распакованный экспорт Telegram в хранилище и укажите папку с result.json' });
+    }
     drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.addClass('is-over'); });
     drop.addEventListener('dragleave', () => drop.removeClass('is-over'));
     drop.addEventListener('drop', (e) => this.onDrop(e));
@@ -132,7 +150,8 @@ class ImportTab {
     const pill = drop.createDiv({ cls: 'tgi-pill' });
     pill.addEventListener('click', (e) => e.stopPropagation());
     this.pillIcon = icon(pill, 'circle');
-    this.input = pill.createEl('input', { type: 'text', cls: 'tgi-pill-input', attr: { placeholder: this.mode === 'zip' ? '/путь/к/ChatExport.zip' : '/путь/к/ChatExport', 'aria-label': 'Путь к экспорту' } });
+    this.input = pill.createEl('input', { type: 'text', cls: 'tgi-pill-input', attr: { placeholder: !isNative ? (this.mode === 'zip' ? 'ZIP в хранилище (необязательно)' : 'папка/в/хранилище') : this.mode === 'zip' ? '/путь/к/ChatExport.zip' : '/путь/к/ChatExport', 'aria-label': 'Путь к экспорту', list: 'tgi-src-list' } });
+    if (!isNative) this.fillSuggestions(pill);
     this.input.value = this.source ? this.source.path : '';
     this.input.addEventListener('change', () => this.choose(this.input.value));
     this.input.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.choose(this.input.value); });
@@ -141,6 +160,19 @@ class ImportTab {
     icon(swap, 'repeat-2');
     swap.addEventListener('click', () => this.pick());
     this.paintSource();
+  }
+
+  // Подсказки пути на телефоне: папки или ZIP-файлы хранилища
+  fillSuggestions(parent) {
+    const dl = parent.createEl('datalist', { attr: { id: 'tgi-src-list' } });
+    const v = this.plugin.app.vault;
+    let items = [];
+    try {
+      items = this.mode === 'zip'
+        ? v.getFiles().filter((f) => /\.zip$/i.test(f.path)).map((f) => f.path)
+        : (v.getAllFolders ? v.getAllFolders(false) : v.getAllLoadedFiles().filter((f) => Array.isArray(f.children))).map((f) => f.path).filter((p) => p && p !== '/');
+    } catch (e) { /* без подсказок */ }
+    for (const p of items.slice(0, 300)) dl.createEl('option', { attr: { value: p } });
   }
 
   // Состояние плашки пути: проверка / ошибка / размер

@@ -1,14 +1,26 @@
 'use strict';
 // Атрибуты (frontmatter) заметок и пересчёт ссылок Back/Next — порт obsidian_recalc_links.py.
-const fs = require('fs');
-const path = require('path');
+const { fsx, path } = require('./platform');
 const { mapPool, sha } = require('./util');
 
-const fsp = fs.promises;
 
 const HEADER_PARSE_RE = /^---\s*([\s\S]+?)\s*---/;
 const HEADER_REPLACE_RE = /^---[\s\S]*?---/;
-const LINK_KEYS = new Set(['Next', 'Prev', 'Back']); // «Prev» — старое имя, при пересчёте превращается в «Back»
+// Имена атрибутов со ссылками на соседние заметки (настройки «Атрибут для ссылки назад / вперёд»).
+// Прежние имена Back / Next / Prev тоже считаются ссылками: при пересчёте они заменяются на настроенные.
+const DEFAULT_LINK_NAMES = { prev: 'Back', next: 'Next' };
+let linkNames = { ...DEFAULT_LINK_NAMES };
+const cleanName = (v, fallback) => {
+  const s = String(v === undefined || v === null ? '' : v).trim().replace(/[:\n\r]/g, '');
+  return s || fallback;
+};
+const setLinkNames = ({ prev, next } = {}) => {
+  linkNames = { prev: cleanName(prev, DEFAULT_LINK_NAMES.prev), next: cleanName(next, DEFAULT_LINK_NAMES.next) };
+  if (linkNames.prev === linkNames.next) linkNames = { ...DEFAULT_LINK_NAMES };
+};
+const getLinkNames = () => linkNames;
+const isLinkKey = (key) => key === linkNames.prev || key === linkNames.next || key === 'Back' || key === 'Next' || key === 'Prev';
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 function parseAttributes(text) {
   const attributes = new Map();
@@ -28,7 +40,7 @@ function parseAttributes(text) {
         currentValues = [];
       }
       currentKey = kv[1].trim();
-      if (LINK_KEYS.has(currentKey)) {
+      if (isLinkKey(currentKey)) {
         currentKey = null;
         continue;
       }
@@ -67,8 +79,8 @@ function updateText(text, attributes) {
 function needsRecalc(text, isFirst, isLast) {
   const match = HEADER_PARSE_RE.exec(text);
   if (!match) return true;
-  const hasNext = /^\s*Next\s*:/m.test(match[1]);
-  const hasBack = /^\s*Back\s*:/m.test(match[1]);
+  const hasNext = new RegExp(`^\\s*${escapeRe(linkNames.next)}\\s*:`, 'm').test(match[1]);
+  const hasBack = new RegExp(`^\\s*${escapeRe(linkNames.prev)}\\s*:`, 'm').test(match[1]);
   if (!isLast && !hasNext) return true;
   if (!isFirst && !hasBack) return true;
   return false;
@@ -76,8 +88,8 @@ function needsRecalc(text, isFirst, isLast) {
 
 function createArgs(text, prevFile, nextFile) {
   const args = parseAttributes(text);
-  if (prevFile) args.set('Back', `"[[${path.basename(prevFile)}]]"`);
-  if (nextFile) args.set('Next', `"[[${path.basename(nextFile)}]]"`);
+  if (prevFile) args.set(linkNames.prev, `"[[${path.basename(prevFile)}]]"`);
+  if (nextFile) args.set(linkNames.next, `"[[${path.basename(nextFile)}]]"`);
   return args;
 }
 
@@ -85,7 +97,7 @@ async function collectMarkdownFiles(folder) {
   const result = [];
   const walk = async (dir) => {
     const subdirs = [];
-    for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
+    for (const entry of await fsx.readdir(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) subdirs.push(full);
       else if (entry.isFile() && entry.name.endsWith('.md')) result.push(full);
@@ -110,12 +122,12 @@ async function recalcLinks(folder, opts = {}) {
   await mapPool(files, concurrency, async (file, i) => {
     const prev = i > 0 ? files[i - 1] : null;
     const next = i < last ? files[i + 1] : null;
-    const sig = sha(`${prev ? path.basename(prev) : ''}|${next ? path.basename(next) : ''}`);
+    const sig = sha(`${prev ? path.basename(prev) : ''}|${next ? path.basename(next) : ''}|${linkNames.prev}|${linkNames.next}`);
 
     let st = null;
     const known = cache ? cache.lookup(file) : null;
     if (known) {
-      st = await fsp.stat(file).catch(() => null);
+      st = await fsx.stat(file).catch(() => null);
       if (st && known.sig === sig && known.m === st.mtimeMs && known.s === st.size) {
         done++;
         if (onProgress && (done % 100 === 0 || done === files.length)) onProgress(done, files.length, path.basename(file));
@@ -125,15 +137,15 @@ async function recalcLinks(folder, opts = {}) {
     return slow();
 
     async function slow() {
-      if (cache && !st) st = await fsp.stat(file).catch(() => null); // до чтения: изменится позже — заметим
-      const text = await fsp.readFile(file, 'utf8');
+      if (cache && !st) st = await fsx.stat(file).catch(() => null); // до чтения: изменится позже — заметим
+      const text = await fsx.readFile(file, 'utf8');
       let final = st;
       if (force || needsRecalc(text, i === 0, i === last)) {
         const newText = updateText(text, createArgs(text, prev, next));
         if (newText !== text) {
-          await fsp.writeFile(file, newText, 'utf8');
+          await fsx.writeFile(file, newText, 'utf8');
           changed++;
-          final = cache ? await fsp.stat(file).catch(() => null) : null;
+          final = cache ? await fsx.stat(file).catch(() => null) : null;
         }
       }
       if (cache && final) cache.store(file, final, sig);
@@ -146,6 +158,7 @@ async function recalcLinks(folder, opts = {}) {
 }
 
 module.exports = {
+  setLinkNames, getLinkNames, DEFAULT_LINK_NAMES,
   HEADER_PARSE_RE, HEADER_REPLACE_RE, parseAttributes, renderHeader, updateText, needsRecalc, createArgs,
   collectMarkdownFiles, recalcLinks,
 };

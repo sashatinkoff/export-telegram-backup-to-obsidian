@@ -217,3 +217,34 @@
 .tgi-suggest-row:hover, .tgi-suggest-row.is-active { background: color-mix(in srgb, var(--teal, var(--interactive-accent)) 16%, transparent); }
 .tgi-suggest-new { color: var(--teal, var(--text-accent)); }
 .tgi-attr-setting { align-items: flex-start; }
+
+/* Телефон и узкие окна */
+@media (max-width: 640px) {
+  .tgi-top { padding: 10px 12px 4px; }
+  .tgi-vault, .tgi-brand .tgi-chip-mono { display: none; }
+  .tgi-brand-name { font-size: 14px; }
+  .tgi-nav { padding: 6px 12px 10px; gap: 4px; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .tgi-nav::-webkit-scrollbar { display: none; }
+  .tgi-tab { white-space: nowrap; flex: none; }
+  .tgi-body { padding: 12px 12px 20px; }
+  .tgi-pane { gap: 12px; }
+  .tgi-pagehead { flex-wrap: wrap; }
+  .tgi-pagehead .tgi-pagetitle .tgi-muted { display: none; }
+  .tgi-target { margin-left: 0; }
+  .tgi-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px; }
+  .tgi-tiles { grid-template-columns: minmax(0, 1fr); }
+  .tgi-segbar { flex-direction: column; }
+  .tgi-actionbar { flex-direction: column; align-items: stretch; }
+  .tgi-actionbar > * { width: 100%; }
+  .tgi-actionbar .tgi-btn { width: 100%; justify-content: center; }
+  .tgi-card { overflow-x: auto; }
+  .tgi-card table, .tgi-tablewrap { display: block; overflow-x: auto; white-space: nowrap; }
+  .tgi-tri-heads { display: none; }
+  .tgi-conf-head .tgi-btn, .tgi-conf-head button { min-height: 40px; }
+  .tgi-footer, .tgi-foot { flex-wrap: wrap; gap: 6px; }
+}
+body.is-mobile .tgi-app button, body.is-mobile .tgi-app .tgi-iconbtn { min-height: 40px; }
+body.is-mobile .tgi-app .tgi-iconbtn { min-width: 40px; }
+body.is-mobile .tgi-app input[type="text"], body.is-mobile .tgi-app input.tgi-pill-input { font-size: 16px; } /* iOS не приближает страницу при вводе */
+body.is-mobile .tgi-attrbox { min-width: 0; max-width: 100%; }
+body.is-mobile .tgi-body { padding-bottom: 28px; }

@@ -1,10 +1,7 @@
 'use strict';
 // Общие мелкие утилиты: даты, файловые операции, пул параллельных задач.
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
+const { fsx, path, sha1Hex } = require('./platform');
 
-const fsp = fs.promises;
 
 const tick = () => new Promise((r) => setTimeout(r, 0)); // отдаём управление интерфейсу Obsidian
 
@@ -51,34 +48,28 @@ function formatDate(fmt, dt) {
   });
 }
 
-const sha = (text) => crypto.createHash('sha1').update(text).digest('hex').slice(0, 16);
+const sha = (text) => sha1Hex(text).slice(0, 16);
 
 // ---------- файлы ----------
 
 async function readOrNull(file) {
-  try { return await fsp.readFile(file, 'utf8'); } catch (e) { return null; }
+  try { return await fsx.readFile(file, 'utf8'); } catch (e) { return null; }
 }
 
 // Запись с автоматическим созданием папки: mkdir вызывается только если папки ещё нет
 async function writeText(file, text) {
-  try {
-    await fsp.writeFile(file, text, 'utf8');
-  } catch (e) {
-    if (e.code !== 'ENOENT') throw e;
-    await fsp.mkdir(path.dirname(file), { recursive: true });
-    await fsp.writeFile(file, text, 'utf8');
-  }
+  await fsx.writeFile(file, text); // папки создаются при необходимости
 }
 
 // Атомарная запись служебных файлов: сначала во временный, потом переименование
 async function writeTextAtomic(file, text) {
   const tmp = `${file}.tmp`;
   await writeText(tmp, text);
-  await fsp.rename(tmp, file);
+  await fsx.rename(tmp, file);
 }
 
 async function removeIfExists(file) {
-  try { await fsp.unlink(file); } catch (e) { /* файла нет — и хорошо */ }
+  try { await fsx.unlink(file); } catch (e) { /* файла нет — и хорошо */ }
 }
 
 // Путь относительно корня хранилища с прямыми слэшами (так хранятся ключи заметок)

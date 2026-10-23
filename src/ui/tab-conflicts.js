@@ -1,8 +1,7 @@
 'use strict';
 // Вкладка «Конфликты записей»: заметки с одинаковыми именами и разным текстом, по очереди, в три колонки:
 // ваша версия, совмещённый вариант (по выбору для каждого блока) и версия из Telegram.
-const fs = require('fs');
-const path = require('path');
+const { path, fsx } = require('../platform');
 const { Notice } = require('obsidian');
 const { REASONS } = require('../constants');
 const { buildBlocks } = require('../diff');
@@ -76,7 +75,7 @@ class ConflictsTab {
       return;
     }
     let st = null;
-    try { st = await fs.promises.stat(this.review.abs(this.selected)); } catch (e) { /* файл мог исчезнуть */ }
+    try { st = await fsx.stat(this.review.abs(this.selected)); } catch (e) { /* файл мог исчезнуть */ }
     if (token !== this.token) return;
     this.analysis = a;
     this.stat = st;

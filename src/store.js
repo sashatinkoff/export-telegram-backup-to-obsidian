@@ -1,10 +1,8 @@
 'use strict';
 // Небольшие хранилища в папке плагина: индекс импорта, очередь разбора, история, «оригиналы» заметок.
-const fs = require('fs');
-const path = require('path');
+const { fsx, path } = require('./platform');
 const { readOrNull, writeText, writeTextAtomic, removeIfExists } = require('./util');
 
-const fsp = fs.promises;
 
 // JSON-файл с версией формата. Если версия не совпала или файла нет, берётся пустое значение (fresh = true).
 class JsonStore {
@@ -129,7 +127,7 @@ class Originals {
     this.keys.clear();
     const walk = async (dir, prefix) => {
       let entries;
-      try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch (e) { return; }
+      try { entries = await fsx.readdir(dir, { withFileTypes: true }); } catch (e) { return; }
       for (const e of entries) {
         if (e.isDirectory()) await walk(path.join(dir, e.name), `${prefix}${e.name}/`);
         else if (e.isFile()) this.keys.add(`${prefix}${e.name}`);
@@ -155,7 +153,7 @@ class Originals {
   }
 
   async clear() {
-    await fsp.rm(this.dir, { recursive: true, force: true });
+    await fsx.rm(this.dir, { recursive: true, force: true });
     this.keys.clear();
   }
 }

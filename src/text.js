@@ -1,6 +1,6 @@
 'use strict';
 // Сравнение текста заметок: «содержимое» — это всё после шапки, атрибуты не учитываются.
-const path = require('path');
+const { path } = require('./platform');
 const { EXT_FAMILY, getFormatMatching } = require('./media');
 const { parseAttributes, renderHeader, HEADER_REPLACE_RE } = require('./links');
 
