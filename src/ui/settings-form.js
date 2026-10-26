@@ -5,12 +5,14 @@ const { pickFolder, pickFile } = require('./pick-folder');
 const { renderAttrPicker } = require('./attr-picker');
 const { renderFolderInput } = require('./folder-input');
 const { isNative } = require('../platform');
+const { VERSION } = require('../constants');
 
 function renderSettingsForm(el, plugin, { redraw }) {
   const s = plugin.settings;
   const save = async (key, value) => { s[key] = value; await plugin.saveSettings(); };
   const group = (title) => el.createEl('h3', { text: title });
 
+  el.createEl('p', { cls: 'setting-item-description', text: `Telegram Import ${VERSION}` });
   group('Источник и папки');
   new Setting(el)
     .setName('Папка или ZIP с экспортом Telegram')
@@ -49,6 +51,12 @@ function renderSettingsForm(el, plugin, { redraw }) {
     .setDesc('Что делать, если в папке хранилища уже есть img_001.webp, а в архиве img_001.png. «Пропускать, если вид тот же»: изображения, видео и аудио считаются одним файлом внутри своего вида. «Пропускать при любом расширении»: report.pdf и report.docx тоже один файл. «Копировать»: сравнивается точное имя. Ссылки на такие файлы в тексте сравниваются по тому же правилу. После переключения сохранённая история сверок сбрасывается.')
     .addDropdown((d) => d.addOptions({ kind: 'Пропускать, если вид тот же', any: 'Пропускать при любом расширении', off: 'Копировать' }).setValue(s.mediaSameName || 'kind').onChange(async (v) => {
       await save('mediaSameName', v);
+      if (plugin.index) { await plugin.ready; await plugin.index.clear(); }
+    }));
+  new Setting(el).setName('Узнавать переименованные медиа по дате в имени')
+    .setDesc('Telegram называет файлы photo_1904@03-10-2026_09-46-36.jpg, а упорядочивание галереи (например, плагин Media Organizer) переименовывает их в 2026-10-03_09-46-36_001.webp. Включено: по дате в имени это один файл, ссылки на них в тексте не считаются различием, а файл не копируется повторно, даже если лежит в другой папке хранилища. После переключения история сверок сбрасывается.')
+    .addToggle((t) => t.setValue(s.mediaByDate !== false).onChange(async (v) => {
+      await save('mediaByDate', v);
       if (plugin.index) { await plugin.ready; await plugin.index.clear(); }
     }));
   const ia = new Setting(el).setName('Игнорировать атрибуты')

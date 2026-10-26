@@ -8,7 +8,7 @@ const { Review } = require('./review');
 const { runImport, runRecalc, emptyStats } = require('./importer');
 const { scanSource } = require('./scan');
 const { resolveInVault, throttle, setGate, targetRel } = require('./util');
-const { setFormatMatching } = require('./media');
+const { setFormatMatching, setMediaByDate } = require('./media');
 const { setLinkNames } = require('./links');
 const { buildHistoryReport } = require('./report');
 const shellModule = require('./ui/shell-view');
@@ -93,11 +93,12 @@ module.exports = class TelegramImportPlugin extends Plugin {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
     if (saved.mediaSameName === undefined && saved.ignoreMediaFormat === false) this.settings.mediaSameName = 'off'; // прежняя настройка-переключатель
     setFormatMatching(this.settings.mediaSameName);
+    setMediaByDate(this.settings.mediaByDate);
     this.applyAttrNames();
     if (this.settings.recalcFolder === 'Telegram/notes') this.settings.recalcFolder = ''; // прежнее значение по умолчанию -> «автоматически»
   }
 
-  async saveSettings() { setFormatMatching(this.settings.mediaSameName); this.applyAttrNames(); await this.saveData(this.settings); }
+  async saveSettings() { setFormatMatching(this.settings.mediaSameName); setMediaByDate(this.settings.mediaByDate); this.applyAttrNames(); await this.saveData(this.settings); }
 
   applyAttrNames() { setLinkNames({ prev: this.settings.linkPrevName, next: this.settings.linkNextName, date: this.settings.dateAttrName }); }
 

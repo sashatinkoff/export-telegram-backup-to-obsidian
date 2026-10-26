@@ -1,7 +1,7 @@
 'use strict';
 // Сравнение текста заметок: «содержимое» — это всё после шапки, атрибуты не учитываются.
 const { path } = require('./platform');
-const { EXT_FAMILY, getFormatMatching } = require('./media');
+const { EXT_FAMILY, getFormatMatching, dateKey, getMediaByDate } = require('./media');
 const { parseAttributes, renderHeader, HEADER_REPLACE_RE } = require('./links');
 
 // Имя медиафайла в ссылке, приведённое к виду, не зависящему от:
@@ -11,6 +11,8 @@ function canonMediaName(raw) {
   let name = raw.trim().replace(/^<|>$/g, '');
   try { name = decodeURIComponent(name); } catch (e) { /* имя не было закодировано */ }
   name = name.split('/').pop();
+  const dk = getMediaByDate() ? dateKey(name) : null;
+  if (dk) return dk; // переименованные по дате файлы (2026-10-03_09-46-36_001.webp) и исходные из Telegram совпадают
   const ext = path.extname(name);
   const mode = getFormatMatching();
   if ((mode === 'kind' && EXT_FAMILY.has(ext.slice(1).toLowerCase())) || (mode === 'any' && /^\.[a-z0-9]{1,8}$/i.test(ext))) name = name.slice(0, -ext.length);

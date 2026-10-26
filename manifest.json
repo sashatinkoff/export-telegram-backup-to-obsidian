@@ -1,7 +1,7 @@
 {
   "id": "telegram-import",
   "name": "Telegram Import",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "minAppVersion": "1.4.0",
   "description": "Импорт архива Telegram в заметки: экспорт, копирование в хранилище и пересчёт ссылок вперёд-назад одной командой. Работает на десктопе и на мобильных.",
   "author": "me",

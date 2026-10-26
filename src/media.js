@@ -39,6 +39,21 @@ const setFormatMatching = (mode) => {
 };
 const getFormatMatching = () => sameNameMode;
 
+// Дата в имени файла. Telegram называет файлы photo_1904@03-10-2026_09-46-36.jpg, а упорядочивание галереи
+// (например, плагин Media Organizer) переименовывает их в 2026-10-03_09-46-36_001.webp: по дате это один и тот же файл.
+// Возвращает ключ вида dt:2026-10-03_09-46-36 или null
+const TG_DATE_RE = /@(\d{2})-(\d{2})-(\d{4})_(\d{2})-(\d{2})-(\d{2})/;
+const ISO_DATE_RE = /(?:^|[^\d])(\d{4})-(\d{2})-(\d{2})[_ T](\d{2})-(\d{2})-(\d{2})(?!\d)/;
+function dateKey(fileName) {
+  let m = TG_DATE_RE.exec(fileName);
+  if (m) return `dt:${m[3]}-${m[2]}-${m[1]}_${m[4]}-${m[5]}-${m[6]}`;
+  m = ISO_DATE_RE.exec(fileName);
+  return m ? `dt:${m[1]}-${m[2]}-${m[3]}_${m[4]}-${m[5]}-${m[6]}` : null;
+}
+let byDate = true;
+const setMediaByDate = (on) => { byDate = on !== false; };
+const getMediaByDate = () => byDate;
+
 function mediaKey(fileName) {
   if (sameNameMode === 'off') return null;
   const ext = path.extname(fileName);
@@ -96,6 +111,26 @@ async function scanArchive(src) {
   return { dirs, total };
 }
 
+// Даты в именах медиафайлов, уже лежащих в папке назначения (в любых подпапках)
+async function collectDateKeys(root) {
+  const keys = new Set();
+  const SKIP = new Set(['.obsidian', '.git', '.trash', 'node_modules']);
+  const walk = async (dir) => {
+    let entries;
+    try { entries = await fsx.readdir(dir, { withFileTypes: true }); } catch (e) { return; }
+    const subdirs = [];
+    for (const e of entries) {
+      if (e.isDirectory()) { if (!SKIP.has(e.name)) subdirs.push(path.join(dir, e.name)); } else if (e.isFile() && EXT_FAMILY.has(path.extname(e.name).slice(1).toLowerCase())) {
+        const k = dateKey(e.name);
+        if (k) keys.add(k);
+      }
+    }
+    await Promise.all(subdirs.map(walk));
+  };
+  await walk(root);
+  return keys;
+}
+
 // Копирует архив в хранилище. Папки объединяются; существующие файлы НЕ перезаписываются
 // (ни с тем же именем, ни в другом формате того же медиа), а файлы с идентичным содержимым под другим
 // именем в той же папке считаются дубликатами и пропускаются.
@@ -109,6 +144,7 @@ async function copyArchive(src, dst, hooks = {}) {
     if (hooks.onProgress) hooks.onProgress(done, total, label);
   };
   if (hooks.onProgress) hooks.onProgress(0, total, '');
+  const dateKeys = byDate ? await collectDateKeys(dst) : null; // файлы, переименованные по дате, считаются уже существующими
 
   for (const { rel, files } of dirs) {
     if (hooks.isCancelled && hooks.isCancelled()) break;
@@ -130,7 +166,8 @@ async function copyArchive(src, dst, hooks = {}) {
     const candidates = [];
     for (const name of files) {
       const key = mediaKey(name);
-      if (existingNames.has(name.toLowerCase()) || (key && existingKeys.has(key))) stats.skipped++;
+      const dk = dateKeys ? dateKey(name) : null;
+      if (existingNames.has(name.toLowerCase()) || (key && existingKeys.has(key)) || (dk && dateKeys.has(dk))) stats.skipped++;
       else candidates.push(name);
     }
     advance(files.length - candidates.length, rel);
@@ -190,4 +227,4 @@ async function copyArchive(src, dst, hooks = {}) {
   return stats;
 }
 
-module.exports = { setFormatMatching, getFormatMatching, EXT_FAMILY, mediaKey, isThumbnail, sameContent, scanArchive, copyArchive };
+module.exports = { dateKey, setMediaByDate, getMediaByDate, setFormatMatching, getFormatMatching, EXT_FAMILY, mediaKey, isThumbnail, sameContent, scanArchive, copyArchive };
