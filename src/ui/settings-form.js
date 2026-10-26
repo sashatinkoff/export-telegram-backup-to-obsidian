@@ -45,10 +45,10 @@ function renderSettingsForm(el, plugin, { redraw }) {
   new Setting(el).setName('Беречь ручные правки')
     .setDesc('Сравнивается только текст заметки. Пересекающиеся изменения попадают на вкладку «Конфликты записей».')
     .addToggle((t) => t.setValue(s.preserveEdits).onChange((v) => save('preserveEdits', v)));
-  new Setting(el).setName('Игнорировать смену формата медиа')
-    .setDesc('Включено: если в хранилище уже есть img_001.webp, а в архиве img_001.png (или наоборот), файл не копируется и используется существующий, а ссылки на них в тексте считаются одинаковыми. Выключено: сравнивается точное имя вместе с расширением. После переключения сохранённая история сверок сбрасывается.')
-    .addToggle((t) => t.setValue(s.ignoreMediaFormat !== false).onChange(async (v) => {
-      await save('ignoreMediaFormat', v);
+  new Setting(el).setName('Файлы с тем же именем, но другим расширением')
+    .setDesc('Что делать, если в папке хранилища уже есть img_001.webp, а в архиве img_001.png. «Пропускать, если вид тот же»: изображения, видео и аудио считаются одним файлом внутри своего вида. «Пропускать при любом расширении»: report.pdf и report.docx тоже один файл. «Копировать»: сравнивается точное имя. Ссылки на такие файлы в тексте сравниваются по тому же правилу. После переключения сохранённая история сверок сбрасывается.')
+    .addDropdown((d) => d.addOptions({ kind: 'Пропускать, если вид тот же', any: 'Пропускать при любом расширении', off: 'Копировать' }).setValue(s.mediaSameName || 'kind').onChange(async (v) => {
+      await save('mediaSameName', v);
       if (plugin.index) { await plugin.ready; await plugin.index.clear(); }
     }));
   const ia = new Setting(el).setName('Игнорировать атрибуты')

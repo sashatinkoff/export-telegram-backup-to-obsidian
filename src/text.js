@@ -12,7 +12,8 @@ function canonMediaName(raw) {
   try { name = decodeURIComponent(name); } catch (e) { /* имя не было закодировано */ }
   name = name.split('/').pop();
   const ext = path.extname(name);
-  if (getFormatMatching() && EXT_FAMILY.has(ext.slice(1).toLowerCase())) name = name.slice(0, -ext.length);
+  const mode = getFormatMatching();
+  if ((mode === 'kind' && EXT_FAMILY.has(ext.slice(1).toLowerCase())) || (mode === 'any' && /^\.[a-z0-9]{1,8}$/i.test(ext))) name = name.slice(0, -ext.length);
   return name.replace(/_\d+@/, '@').toLowerCase();
 }
 

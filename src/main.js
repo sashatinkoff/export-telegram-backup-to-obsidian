@@ -91,12 +91,13 @@ module.exports = class TelegramImportPlugin extends Plugin {
     const saved = (await this.loadData()) || {};
     delete saved.conflicts; // поле прежних версий
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
-    setFormatMatching(this.settings.ignoreMediaFormat);
+    if (saved.mediaSameName === undefined && saved.ignoreMediaFormat === false) this.settings.mediaSameName = 'off'; // прежняя настройка-переключатель
+    setFormatMatching(this.settings.mediaSameName);
     this.applyAttrNames();
     if (this.settings.recalcFolder === 'Telegram/notes') this.settings.recalcFolder = ''; // прежнее значение по умолчанию -> «автоматически»
   }
 
-  async saveSettings() { setFormatMatching(this.settings.ignoreMediaFormat); this.applyAttrNames(); await this.saveData(this.settings); }
+  async saveSettings() { setFormatMatching(this.settings.mediaSameName); this.applyAttrNames(); await this.saveData(this.settings); }
 
   applyAttrNames() { setLinkNames({ prev: this.settings.linkPrevName, next: this.settings.linkNextName, date: this.settings.dateAttrName }); }
 

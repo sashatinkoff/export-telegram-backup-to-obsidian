@@ -25,15 +25,24 @@ const MEDIA_FAMILIES = {
 const EXT_FAMILY = new Map();
 for (const [family, exts] of Object.entries(MEDIA_FAMILIES)) exts.forEach((e) => EXT_FAMILY.set(e, family));
 
-// Включено (по умолчанию): смена формата (a.png -> a.webp) не считается новым файлом и различием в тексте заметок.
-// Выключено: файлы и ссылки сравниваются по точному имени вместе с расширением.
-let formatMatching = true;
-const setFormatMatching = (on) => { formatMatching = on !== false; };
-const getFormatMatching = () => formatMatching;
+// Как считать файлы с одинаковым именем и разным расширением (настройка «Файлы с тем же именем»):
+//   kind (по умолчанию) — тот же файл, если расширения из одного вида: a.png и a.webp (изображения, видео, аудио)
+//   any — тот же файл при любом расширении: a.jpg, a.pdf, a.zip
+//   off — сравнивается точное имя вместе с расширением
+// Это же правило применяется к ссылкам на медиа при сравнении текста заметок.
+let sameNameMode = 'kind';
+const MODES = new Set(['kind', 'any', 'off']);
+const setFormatMatching = (mode) => {
+  if (mode === true) sameNameMode = 'kind';
+  else if (mode === false) sameNameMode = 'off';
+  else sameNameMode = MODES.has(mode) ? mode : 'kind';
+};
+const getFormatMatching = () => sameNameMode;
 
 function mediaKey(fileName) {
-  if (!formatMatching) return null;
+  if (sameNameMode === 'off') return null;
   const ext = path.extname(fileName);
+  if (sameNameMode === 'any') return ext.length > 1 ? `any:${path.basename(fileName, ext).toLowerCase()}` : null;
   const family = EXT_FAMILY.get(ext.slice(1).toLowerCase());
   return family ? `${family}:${path.basename(fileName, ext).toLowerCase()}` : null;
 }
