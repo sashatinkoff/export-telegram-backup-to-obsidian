@@ -88,6 +88,7 @@ async function runImportFrom(env) {
     dateFormat: settings.dateFormat,
     threshold: Math.max(0, Number(settings.mergeThreshold) || 0),
     convertTags: settings.convertTags !== false,
+    customAttrs: settings.customAttrs,
   });
   let posts = converter.getPosts(json);
   const convert = convertOptions(settings);
@@ -131,6 +132,7 @@ async function runImportFrom(env) {
   stats.notes.total = posts.length;
   stage('notes', { total: posts.length, label: '' });
 
+  const customSig = converter.customAttrs.length ? JSON.stringify(converter.customAttrs) : ''; // смена своих атрибутов = другой отпечаток поста
   const sync = new NoteSync({ index, originals, review, preserve: settings.preserveEdits, fullScan: !!settings.verifyAll, ignoreAttrs: settings.ignoreAttrs, reviewEdits: settings.reviewLocalEdits !== false });
   let done = 0;
   try {
@@ -142,7 +144,7 @@ async function runImportFrom(env) {
         file,
         key: toKey(vaultBase, file),
         links: { prev, next },
-        rawHash: sha(JSON.stringify(post)),
+        rawHash: sha(JSON.stringify(post) + customSig),
         build: () => converter.buildNote(post, prev, next),
       });
       stats.notes[status]++;
@@ -164,6 +166,7 @@ async function runImportFrom(env) {
   const rs = await recalcLinks(recalcDir, {
     force: settings.recalcForce,
     cache: linkCache(env),
+    exclude: [resolveInVault(vaultBase, settings.conflictsFolder || 'merge_conflicts', 'Папка конфликтов')],
     onProgress: (d, t, label) => stage('links', { done: d, total: t, label }),
     isCancelled,
   });
@@ -214,6 +217,7 @@ async function runRecalc(env) {
   const rs = await recalcLinks(recalcDir, {
     force: settings.recalcForce,
     cache: linkCache(env),
+    exclude: [resolveInVault(vaultBase, settings.conflictsFolder || 'merge_conflicts', 'Папка конфликтов')],
     onProgress: (d, t, label) => stage('links', { done: d, total: t, label }),
     isCancelled: env.isCancelled,
   });

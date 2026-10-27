@@ -3,6 +3,7 @@
 const { Setting } = require('obsidian');
 const { pickFolder, pickFile } = require('./pick-folder');
 const { renderAttrPicker } = require('./attr-picker');
+const { renderCustomAttrs } = require('./custom-attrs');
 const { renderFolderInput } = require('./folder-input');
 const { isNative } = require('../platform');
 const { VERSION } = require('../constants');
@@ -83,6 +84,10 @@ function renderSettingsForm(el, plugin, { redraw }) {
     new Setting(el).setName('Максимальная сторона, px').setDesc('Ширина и высота не превысят это значение, пропорции сохраняются. 0 — не уменьшать.')
       .addText((t) => t.setValue(String(s.imageMaxSide || 0)).onChange((v) => save('imageMaxSide', Math.max(0, parseInt(v, 10) || 0))));
   }
+  const ca = new Setting(el).setName('Свои атрибуты в заметках')
+    .setDesc('Добавляются в шапку новых и обновляемых заметок, например «Источник: телеграм». Одна строка в значении даёт обычный атрибут, несколько строк (по элементу на строку) дают список. Одинаковые имена объединяются в список. К заметкам, которые импорт не меняет, атрибуты не добавляются. Back, Next и атрибут с датой задаются отдельно.');
+  ca.settingEl.addClass('tgi-attr-setting');
+  renderCustomAttrs(ca.controlEl, { app: plugin.app, values: Array.isArray(s.customAttrs) ? s.customAttrs : [], onChange: (v) => save('customAttrs', v) });
   const ia = new Setting(el).setName('Игнорировать атрибуты')
     .setDesc('YAML-атрибуты, которые плагин не добавляет в уже существующие заметки при обновлении и слиянии (например, tags, если вы убрали их намеренно). Атрибуты и так не участвуют в поиске конфликтов: сравнивается только текст. Back и Next расставляет пересчёт ссылок. Начните вводить имя: подсказки берутся из атрибутов ваших заметок.');
   ia.settingEl.addClass('tgi-attr-setting');

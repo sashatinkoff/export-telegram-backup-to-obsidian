@@ -22,6 +22,9 @@ const getLinkNames = () => linkNames;
 const isLinkKey = (key) => key === linkNames.prev || key === linkNames.next || key === 'Back' || key === 'Next' || key === 'Prev';
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// Список в шапке: tags хранится строкой через запятую (так сложилось), остальные списки — массивом, чтобы остаться списками
+const listValue = (key, values) => (key === 'tags' ? values.join(', ') : values.slice());
+
 function parseAttributes(text) {
   const attributes = new Map();
   const match = HEADER_PARSE_RE.exec(text);
@@ -36,7 +39,7 @@ function parseAttributes(text) {
 
     if (kv) {
       if (currentKey && currentValues.length) {
-        attributes.set(currentKey, currentValues.join(', '));
+        attributes.set(currentKey, listValue(currentKey, currentValues));
         currentValues = [];
       }
       currentKey = kv[1].trim();
@@ -53,7 +56,7 @@ function parseAttributes(text) {
       currentValues.push(line.replace(/^-+/, '').trim());
     }
   }
-  if (currentKey && currentValues.length) attributes.set(currentKey, currentValues.join(', '));
+  if (currentKey && currentValues.length) attributes.set(currentKey, listValue(currentKey, currentValues));
   return attributes;
 }
 
@@ -74,7 +77,9 @@ function renderHeader(attributes) {
   let header = '---';
   for (const [key, value] of orderedAttributes(attributes)) {
     header += `\n${key}: `;
-    if (key === 'tags') {
+    if (Array.isArray(value)) {
+      for (const item of value) header += `\n  - ${item}`;
+    } else if (key === 'tags') {
       for (const tag of value.split(',')) header += `\n  - ${tag.trim()}`;
     } else {
       header += value;
@@ -89,9 +94,22 @@ function updateText(text, attributes) {
   return `${header}\n${text.trim()}`;
 }
 
-function needsRecalc(text, isFirst, isLast) {
+// Значение атрибута-ссылки в шапке: «"[[имя.md]]"» -> «имя.md» (null, если атрибута нет)
+function linkTarget(header, name) {
+  const m = new RegExp(`^\\s*${escapeRe(name)}\\s*:\\s*"?\\[\\[([^\\]|#]+)`, 'm').exec(header);
+  return m ? m[1].trim() : null;
+}
+
+// expected — { prev, next }: имена реально существующих соседних заметок (null — соседа нет).
+// Ссылка, ведущая не на соседа (например, на удалённую или перенесённую заметку), требует пересчёта
+function needsRecalc(text, isFirst, isLast, expected) {
   const match = HEADER_PARSE_RE.exec(text);
   if (!match) return true;
+  if (expected) {
+    if (linkTarget(match[1], linkNames.prev) !== (expected.prev || null)) return true;
+    if (linkTarget(match[1], linkNames.next) !== (expected.next || null)) return true;
+    return false;
+  }
   const hasNext = new RegExp(`^\\s*${escapeRe(linkNames.next)}\\s*:`, 'm').test(match[1]);
   const hasBack = new RegExp(`^\\s*${escapeRe(linkNames.prev)}\\s*:`, 'm').test(match[1]);
   if (!isLast && !hasNext) return true;
@@ -109,13 +127,16 @@ function createArgs(text, prevFile, nextFile) {
   return args;
 }
 
-async function collectMarkdownFiles(folder) {
+// exclude — абсолютные пути папок, которые не входят в цепочку (например, папка конфликтов: её файлы временные,
+// ссылки на них оказались бы мёртвыми). Папки, начинающиеся с точки (.obsidian, .trash, .git), пропускаются всегда
+async function collectMarkdownFiles(folder, exclude = []) {
   const result = [];
+  const skip = new Set(exclude.map((d) => path.resolve(d)));
   const walk = async (dir) => {
     const subdirs = [];
     for (const entry of await fsx.readdir(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) subdirs.push(full);
+      if (entry.isDirectory()) { if (!entry.name.startsWith('.') && !skip.has(path.resolve(full))) subdirs.push(full); }
       else if (entry.isFile() && entry.name.endsWith('.md')) result.push(full);
     }
     await Promise.all(subdirs.map(walk));
@@ -129,8 +150,8 @@ async function collectMarkdownFiles(folder) {
 //   cache — необязательный кэш { lookup(file) -> { m, s, sig } | null, store(file, st, sig) }: файлы, которые не менялись
 //   с прошлого пересчёта и у которых те же соседи, не читаются с диска
 async function recalcLinks(folder, opts = {}) {
-  const { force = true, concurrency = 16, onProgress, cache, isCancelled } = opts;
-  const files = await collectMarkdownFiles(folder);
+  const { force = true, concurrency = 16, onProgress, cache, isCancelled, exclude } = opts;
+  const files = await collectMarkdownFiles(folder, exclude);
   const last = files.length - 1;
   let changed = 0;
   let done = 0;
@@ -156,7 +177,7 @@ async function recalcLinks(folder, opts = {}) {
       if (cache && !st) st = await fsx.stat(file).catch(() => null); // до чтения: изменится позже — заметим
       const text = await fsx.readFile(file, 'utf8');
       let final = st;
-      if (force || needsRecalc(text, i === 0, i === last)) {
+      if (force || needsRecalc(text, i === 0, i === last, { prev: prev ? path.basename(prev) : null, next: next ? path.basename(next) : null })) {
         const newText = updateText(text, createArgs(text, prev, next));
         if (newText !== text) {
           await fsx.writeFile(file, newText, 'utf8');

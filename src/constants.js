@@ -1,7 +1,7 @@
 'use strict';
 
 const BUILD = '0.5.4 · 2026-10-22';
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 
 const VIEW_DASHBOARD = 'telegram-import-dashboard';
 const VIEW_REVIEW = 'telegram-import-review';
@@ -28,6 +28,7 @@ const DEFAULT_SETTINGS = {
   verifyAll: false,               // читать с диска каждую заметку, даже если она не менялась с прошлого импорта
   reviewLocalEdits: true,         // заметки, где текст правили вы (а в Telegram он прежний), тоже показывать на экране сравнения
   mediaByDate: true,
+  customAttrs: [], // [{ name, value }]: свои атрибуты в новых заметках; несколько строк в value — список
   mediaLayout: 'keep', // 'keep' — как в архиве, 'year' — по папкам-годам, 'year-rename' — по годам и с именем заметки
   mediaRoot: 'media',
   convertImages: false,

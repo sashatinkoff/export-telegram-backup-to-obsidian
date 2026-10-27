@@ -248,3 +248,12 @@ body.is-mobile .tgi-app .tgi-iconbtn { min-width: 40px; }
 body.is-mobile .tgi-app input[type="text"], body.is-mobile .tgi-app input.tgi-pill-input { font-size: 16px; } /* iOS не приближает страницу при вводе */
 body.is-mobile .tgi-attrbox { min-width: 0; max-width: 100%; }
 body.is-mobile .tgi-body { padding-bottom: 28px; }
+
+/* свои атрибуты */
+.tgi-cattrs { display: flex; flex-direction: column; gap: 6px; width: 100%; min-width: 260px; }
+.tgi-cattr { display: grid; grid-template-columns: minmax(90px, 1fr) minmax(120px, 2fr) auto; gap: 6px; align-items: start; }
+.tgi-cattr-name, .tgi-cattr-value { width: 100%; box-sizing: border-box; }
+.tgi-cattr-value { resize: vertical; min-height: 30px; font-family: var(--font-monospace); font-size: 12px; }
+.tgi-cattr-del { font-size: 16px; padding: 4px 8px; }
+.tgi-cattr-add { align-self: flex-start; }
+@media (max-width: 600px) { .tgi-cattr { grid-template-columns: 1fr auto; } .tgi-cattr-value { grid-column: 1 / 2; } }

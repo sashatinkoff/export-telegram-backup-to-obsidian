@@ -4,8 +4,28 @@ const { py, isDict, pad2, parseDate, formatDate, MONTHS_RU_GENITIVE, MONTHS_EN }
 const { path } = require('./platform');
 const { getLinkNames } = require('./links');
 
+// Свои атрибуты из настроек: [{ name, value }] -> [{ name, items }]. Одинаковые имена объединяются в список;
+// в value каждая строка — отдельный элемент (одна строка — обычное значение, несколько — список)
+function normalizeCustomAttrs(list) {
+  const out = new Map();
+  for (const a of Array.isArray(list) ? list : []) {
+    const name = String((a && a.name) || '').trim().replace(/[:\n\r]/g, '');
+    if (!name) continue;
+    const items = String((a && a.value) || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+    if (!items.length) continue;
+    const key = name.toLowerCase();
+    if (!out.has(key)) out.set(key, { name, items: [] });
+    for (const it of items) if (!out.get(key).items.includes(it)) out.get(key).items.push(it);
+  }
+  return [...out.values()];
+}
+
+// Скаляр YAML: кавычки только когда без них значение разобралось бы иначе
+const yamlScalar = (v) => (/^[\s'"#&*!|>%@`[\]{},-]|:(\s|$)|\s#|\s$/.test(v) ? `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : v);
+
 class TelegramConverter {
-  constructor({ yandexApiKey = '', dateFormat = '', threshold = 120, convertTags = true } = {}) {
+  constructor({ yandexApiKey = '', dateFormat = '', threshold = 120, convertTags = true, customAttrs = [] } = {}) {
+    this.customAttrs = normalizeCustomAttrs(customAttrs);
     this.convertTags = convertTags; // хэштеги -> tags в шапке (иначе остаются в тексте)
     this.yandexApiKey = yandexApiKey;
     this.dateFormat = dateFormat;
@@ -461,8 +481,17 @@ class TelegramConverter {
     // Порядок как у пересчёта ссылок (links.orderedAttributes): Date, назад, вперёд, tags, остальное
     if (prevFile) header += `\n${names.prev}: "[[${prevFile}]]"`;
     if (nextFile) header += `\n${names.next}: "[[${nextFile}]]"`;
-    if (this.convertTags && post.hashTags.length) header += `\ntags: \n${post.hashTags.map((t) => `  - ${t}`).join('\n')}`; // «tags: » с пробелом — как у пересчёта ссылок, иначе он переписывал бы каждую новую заметку
+    const custom = this.customAttrs.filter((a) => ![names.date, names.prev, names.next].includes(a.name));
+    const extraTags = custom.find((a) => a.name.toLowerCase() === 'tags');
+    const tags = this.convertTags ? post.hashTags.slice() : [];
+    if (extraTags) for (const t of extraTags.items) if (!tags.includes(t)) tags.push(t);
+    if (tags.length) header += `\ntags: \n${tags.map((t) => `  - ${t}`).join('\n')}`; // «tags: » с пробелом — как у пересчёта ссылок, иначе он переписывал бы каждую новую заметку
     if (py(post.forwardedFrom)) header += `\nИсточник: ${post.forwardedFrom}`;
+    for (const a of custom) {
+      if (a.name.toLowerCase() === 'tags') continue;
+      if (a.name === 'Источник' && py(post.forwardedFrom)) continue; // уже есть из Telegram
+      header += a.items.length > 1 ? `\n${a.name}: \n${a.items.map((t) => `  - ${t}`).join('\n')}` : `\n${a.name}: ${yamlScalar(a.items[0])}`;
+    }
     return `${header}\n---`;
   }
 
@@ -474,4 +503,4 @@ class TelegramConverter {
   }
 }
 
-module.exports = { TelegramConverter };
+module.exports = { TelegramConverter, normalizeCustomAttrs };
