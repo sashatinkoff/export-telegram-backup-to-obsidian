@@ -1,7 +1,7 @@
 'use strict';
 
 const BUILD = '0.5.4 · 2026-10-22';
-const VERSION = '0.7.0';
+const VERSION = '0.8.2';
 
 const VIEW_DASHBOARD = 'telegram-import-dashboard';
 const VIEW_REVIEW = 'telegram-import-review';

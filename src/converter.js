@@ -23,6 +23,12 @@ function normalizeCustomAttrs(list) {
 // Скаляр YAML: кавычки только когда без них значение разобралось бы иначе
 const yamlScalar = (v) => (/^[\s'"#&*!|>%@`[\]{},-]|:(\s|$)|\s#|\s$/.test(v) ? `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : v);
 
+// Строки YAML для атрибутов: [{ name, items }] -> [{ name, lines }]
+const attrLines = (list) => list.map((a) => ({
+  name: a.name,
+  lines: a.items.length > 1 ? [`${a.name}: `, ...a.items.map((t) => `  - ${t}`)] : [`${a.name}: ${yamlScalar(a.items[0])}`],
+}));
+
 class TelegramConverter {
   constructor({ yandexApiKey = '', dateFormat = '', threshold = 120, convertTags = true, customAttrs = [] } = {}) {
     this.customAttrs = normalizeCustomAttrs(customAttrs);
@@ -487,10 +493,10 @@ class TelegramConverter {
     if (extraTags) for (const t of extraTags.items) if (!tags.includes(t)) tags.push(t);
     if (tags.length) header += `\ntags: \n${tags.map((t) => `  - ${t}`).join('\n')}`; // «tags: » с пробелом — как у пересчёта ссылок, иначе он переписывал бы каждую новую заметку
     if (py(post.forwardedFrom)) header += `\nИсточник: ${post.forwardedFrom}`;
-    for (const a of custom) {
+    for (const a of attrLines(custom)) {
       if (a.name.toLowerCase() === 'tags') continue;
       if (a.name === 'Источник' && py(post.forwardedFrom)) continue; // уже есть из Telegram
-      header += a.items.length > 1 ? `\n${a.name}: \n${a.items.map((t) => `  - ${t}`).join('\n')}` : `\n${a.name}: ${yamlScalar(a.items[0])}`;
+      header += `\n${a.lines.join('\n')}`;
     }
     return `${header}\n---`;
   }
@@ -503,4 +509,4 @@ class TelegramConverter {
   }
 }
 
-module.exports = { TelegramConverter, normalizeCustomAttrs };
+module.exports = { TelegramConverter, normalizeCustomAttrs, attrLines };

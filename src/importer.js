@@ -1,11 +1,13 @@
 'use strict';
 // Конвейер импорта: файлы архива -> заметки -> ссылки Back/Next -> сравнение заметок с одинаковыми именами.
 const { fsx, path } = require('./platform');
-const { TelegramConverter } = require('./converter');
+const { TelegramConverter, normalizeCustomAttrs, attrLines } = require('./converter');
+const { addAttrsToText, skipReason } = require('./addattrs');
+const { parseDate } = require('./util');
 const { copyArchive } = require('./media');
 const { planMedia } = require('./mediaplan');
 const { convertOptions } = require('./imageconv');
-const { recalcLinks } = require('./links');
+const { recalcLinks, getLinkNames, collectMarkdownFiles } = require('./links');
 const { NoteSync } = require('./sync');
 const { countContent, chatInfo } = require('./scan');
 const zip = require('./zip');
@@ -15,7 +17,7 @@ const { mapPool, tick, resolveInVault, toKey, sha, recalcRel } = require('./util
 const NOTE_CONCURRENCY = 16;
 
 const emptyStats = () => ({
-  notes: { total: 0, written: 0, unchanged: 0, kept: 0, merged: 0, review: 0 },
+  notes: { total: 0, written: 0, unchanged: 0, kept: 0, merged: 0, review: 0, attrs: 0 },
   files: { copied: 0, skipped: 0, errors: 0, bytes: 0 },
   links: { changed: 0, total: 0 },
 });
@@ -132,7 +134,8 @@ async function runImportFrom(env) {
   stats.notes.total = posts.length;
   stage('notes', { total: posts.length, label: '' });
 
-  const customSig = converter.customAttrs.length ? JSON.stringify(converter.customAttrs) : ''; // смена своих атрибутов = другой отпечаток поста
+  // Всё, что влияет на шапку: при смене этих настроек заметки перепроверяются, а не пропускаются по отпечатку
+  const attrSig = JSON.stringify([converter.customAttrs, (settings.ignoreAttrs || []).map((k) => String(k).toLowerCase()).sort(), settings.convertTags !== false, getLinkNames().date, 'attrs-v1']);
   const sync = new NoteSync({ index, originals, review, preserve: settings.preserveEdits, fullScan: !!settings.verifyAll, ignoreAttrs: settings.ignoreAttrs, reviewEdits: settings.reviewLocalEdits !== false });
   let done = 0;
   try {
@@ -144,7 +147,7 @@ async function runImportFrom(env) {
         file,
         key: toKey(vaultBase, file),
         links: { prev, next },
-        rawHash: sha(JSON.stringify(post) + customSig),
+        rawHash: sha(JSON.stringify(post) + attrSig),
         build: () => converter.buildNote(post, prev, next),
       });
       stats.notes[status]++;
@@ -158,7 +161,8 @@ async function runImportFrom(env) {
   if (isCancelled()) { stage('notes', { state: 'cancelled' }); log('Остановлено на этапе заметок', 'warn'); return result('cancelled'); }
   stage('notes', { state: 'done', done: posts.length, label: '' });
   const n = stats.notes;
-  log(`Заметки: записано ${n.written}, без изменений ${n.unchanged}, ваши правки сохранены ${n.kept}, объединено ${n.merged}, на сравнение ${n.review}`);
+  n.attrs = sync.attrsAdded;
+  log(`Заметки: записано ${n.written}, без изменений ${n.unchanged}, ваши правки сохранены ${n.kept}, объединено ${n.merged}, на сравнение ${n.review}${n.attrs ? `; атрибуты дополнены у ${n.attrs}` : ''}`);
 
   // ---- 3. ссылки Back/Next
   stage('links', { state: 'running', done: 0, total: 0, label: '' });
@@ -230,4 +234,74 @@ async function runRecalc(env) {
   return { status: cancelled ? 'cancelled' : 'ok', stats, pending: review.count };
 }
 
-module.exports = { runImport, runRecalc, finishReview, emptyStats };
+// Только добавить свои атрибуты (настройка «Свои атрибуты в заметках») в уже существующие заметки.
+// Ничего не создаёт, не копирует и не меняет в тексте. mode: 'json' — заметки, чьи даты есть в result.json
+// (по каждому сообщению, поэтому неполный JSON не мешает), 'all' — все заметки папки назначения
+async function runAddAttrs(env) {
+  const { vaultBase, settings, json, mode } = env;
+  const hooks = env.hooks || {};
+  const stage = (name, patch) => { if (hooks.stage) hooks.stage(name, patch); };
+  const log = (message, level = 'info') => { if (hooks.log) hooks.log(message, level); };
+  const stats = emptyStats();
+  const items = attrLines(normalizeCustomAttrs(settings.customAttrs));
+  if (!items.length) throw new Error('Добавьте хотя бы один атрибут в настройке «Свои атрибуты в заметках»');
+  const target = resolveInVault(vaultBase, settings.targetFolder, 'Папка назначения');
+  if (!(await fsx.exists(target))) throw new Error(`Нет папки назначения: ${target}`);
+  const ignore = new Set((settings.ignoreAttrs || []).map((k) => String(k).trim().toLowerCase()).filter(Boolean));
+
+  stage('links', { state: 'running', done: 0, total: 0, label: 'поиск заметок…' });
+  let files = await collectMarkdownFiles(target, [resolveInVault(vaultBase, settings.conflictsFolder || 'merge_conflicts', 'Папка конфликтов')]);
+  const total = files.length;
+  if (mode !== 'all') {
+    if (!json) throw new Error('Нет result.json: выберите экспорт Telegram');
+    // Заметка узнаётся по дате и времени в имени файла (допускаются суффиксы, «_» или «T» вместо пробела, «:» и «.» вместо «-»)
+    const p2 = (n) => String(n).padStart(2, '0');
+    const keys = new Set();
+    for (const m of json.messages || []) {
+      if (!m.date) continue;
+      const dt = parseDate(m.date);
+      keys.add(`${dt.y}-${p2(dt.mo)}-${p2(dt.d)}_${p2(dt.H)}-${p2(dt.M)}-${p2(dt.S)}`);
+    }
+    const nameKey = (name) => {
+      const m = /(\d{4})-(\d{2})-(\d{2})[ _T](\d{2})[-:.](\d{2})[-:.](\d{2})/.exec(name);
+      return m ? `${m[1]}-${m[2]}-${m[3]}_${m[4]}-${m[5]}-${m[6]}` : null;
+    };
+    const matched = files.filter((f) => keys.has(nameKey(path.basename(f))));
+    log(`В JSON сообщений с датой: ${keys.size}; заметок в «${path.relative(vaultBase, target) || '/'}»: ${total}; совпало по дате: ${matched.length}`);
+    if (!matched.length) {
+      const sample = [...keys].slice(0, 2).join(', ');
+      const have = files.slice(0, 3).map((f) => path.basename(f)).join(', ');
+      log(`Совпадений нет. Ожидаются имена вида «${sample.replace(/_/, ' ')}» (ГГГГ-ММ-ДД ЧЧ-ММ-СС.md). В папке, например: ${have || 'пусто'}. Проверьте «Папку назначения» в настройках.`, 'warn');
+    }
+    files = matched;
+  } else log(`Заметок в папке назначения: ${total}`);
+
+  let done = 0;
+  let changed = 0;
+  const skipped = { exists: 0, ignored: 0, reserved: 0 };
+  const example = {};
+  await mapPool(files, 16, async (file) => {
+    const text = await fsx.readFile(file, 'utf8');
+    const out = addAttrsToText(text, items, ignore);
+    if (out !== null) { await fsx.writeFile(file, out, 'utf8'); changed++; } else {
+      const why = skipReason(text, items, ignore);
+      if (why) {
+        skipped[why.reason]++;
+        if (!example[why.reason]) example[why.reason] = `${path.basename(file)}${why.line ? `: «${why.line.trim()}»` : ''}`;
+      }
+    }
+    done++;
+    if (done % 50 === 0 || done === files.length) stage('links', { done, total: files.length, label: path.basename(file) });
+  }, env.isCancelled);
+  stats.links = { changed, total: files.length };
+  if (hooks.stats) hooks.stats(stats);
+  const cancelled = env.isCancelled && env.isCancelled();
+  stage('links', { state: cancelled ? 'cancelled' : 'done', done, total: files.length, label: '' });
+  if (skipped.exists) log(`Атрибут уже есть в ${skipped.exists} заметках, например ${example.exists}`, 'warn');
+  if (skipped.ignored) log(`Пропущено ${skipped.ignored} заметок: атрибут «${items.map((i) => i.name).join(', ')}» в списке «Игнорировать атрибуты»`, 'warn');
+  if (skipped.reserved) log(`Пропущено ${skipped.reserved} заметок: имя атрибута совпадает с датой, Back или Next`, 'warn');
+  log(`Атрибуты добавлены в ${changed} из ${files.length} найденных заметок${changed === 0 && files.length ? ' (в них уже есть эти атрибуты или они в списке игнорируемых)' : ''}`);
+  return { status: cancelled ? 'cancelled' : 'ok', stats, pending: env.review.count };
+}
+
+module.exports = { runAddAttrs, runImport, runRecalc, finishReview, emptyStats };

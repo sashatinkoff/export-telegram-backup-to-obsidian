@@ -227,8 +227,8 @@ class HistoryTab {
       const tr = body.createEl('tr');
       const dt = tr.createEl('td', { cls: 'tgi-mono' });
       dt.createSpan({ text: fmtDateTime(r.startedAt) });
-      tr.createEl('td', { cls: 'tgi-mono tgi-accent tgi-srccell', text: r.kind === 'links' ? 'пересчёт ссылок' : r.sourceName || r.archive || '—', attr: { title: r.archive || '' } });
-      const vol = r.kind === 'links' ? `${fmtNum(r.stats.links.total)} файлов` : `${fmtNum(r.messages || r.stats.notes.total)} сообщ.${r.bytes ? ` · ${fmtBytes(r.bytes)}` : ''}`;
+      tr.createEl('td', { cls: 'tgi-mono tgi-accent tgi-srccell', text: r.kind === 'links' ? 'пересчёт ссылок' : r.kind === 'attrs' ? 'свои атрибуты' : r.sourceName || r.archive || '—', attr: { title: r.archive || '' } });
+      const vol = r.kind === 'links' || r.kind === 'attrs' ? `${fmtNum(r.stats.links.total)} файлов` : `${fmtNum(r.messages || r.stats.notes.total)} сообщ.${r.bytes ? ` · ${fmtBytes(r.bytes)}` : ''}`;
       tr.createEl('td', { cls: 'tgi-mono tgi-small', text: `${vol} · ${fmtDuration(r.durationMs)}` });
       const st = STATUS[r.status] || [r.status, 'tgi-chip-mono'];
       tr.createEl('td').createSpan({ cls: `tgi-chip ${st[1]}`, text: st[0] });

@@ -3,7 +3,7 @@
 const { fsx } = require('./platform');
 const { splitNote, renderNote, lineKey } = require('./text');
 const { sha, readOrNull, writeText } = require('./util');
-const { getLinkNames } = require('./links');
+const { getLinkNames, updateText } = require('./links');
 
 const statOrNull = (file) => fsx.stat(file).catch(() => null);
 const { merge3 } = require('./diff');
@@ -32,6 +32,8 @@ class NoteSync {
     this.originals = originals;
     this.review = review;
     this.preserve = preserve;
+    this.attrsAdded = 0; // сколько существующих заметок дополнено недостающими атрибутами
+    this.touched = new Set(); // файлы, переписанные при дополнении атрибутов (их состояние надо запомнить заново)
     this.fullScan = fullScan; // не пропускать заметки по дате изменения: читать каждую с диска
   }
 
@@ -58,10 +60,25 @@ class NoteSync {
 
     const status = await this.syncSlow({ file, key, links, fresh: build() });
     if (preserve && (status === 'unchanged' || status === 'kept' || status === 'written' || status === 'merged')) {
-      const now = status === 'unchanged' || status === 'kept' ? st : await statOrNull(file);
+      const now = (status === 'unchanged' || status === 'kept') && !this.touched.delete(key) ? st : await statOrNull(file);
       if (now) index.mark(key, { r: rawHash, st: now, kept: status === 'kept' });
     }
     return status;
+  }
+
+  // Текст заметки не трогаем, но если в её шапке нет атрибутов, которые плагин обычно ставит (дата, tags, Источник,
+  // свои из настроек), они добавляются. Существующие значения и атрибуты из «Игнорировать» не меняются
+  async topUp(file, key, disk, D, F, links) {
+    const merged = mergeAttrs(D.attrs, F.attrs, links, this.ignore);
+    const names = getLinkNames();
+    let missing = false;
+    for (const k of merged.keys()) {
+      if (k !== names.prev && k !== names.next && !D.attrs.has(k)) { missing = true; break; }
+    }
+    if (!missing) return;
+    await writeText(file, updateText(disk.replace(/\r\n/g, '\n'), merged));
+    this.attrsAdded++;
+    this.touched.add(key);
   }
 
   async syncSlow({ file, key, links, fresh }) {
@@ -81,7 +98,7 @@ class NoteSync {
     const D = splitNote(disk);
 
     if (!preserve) {
-      if (D.key === F.key) return 'unchanged';
+      if (D.key === F.key) { await this.topUp(file, key, disk, D, F, links); return 'unchanged'; }
       await writeText(file, fresh);
       return 'written';
     }
@@ -91,6 +108,7 @@ class NoteSync {
       index.set(key, freshHash);
       await originals.remove(key);
       await review.discard(key);
+      await this.topUp(file, key, disk, D, F, links);
       return 'unchanged';
     }
 
@@ -111,6 +129,7 @@ class NoteSync {
       // Уже просмотрено: запоминаем «оригинал» для будущих слияний
       if (!originals.has(key)) await originals.write(key, F.body);
       await review.discard(key);
+      await this.topUp(file, key, disk, D, F, links);
       return 'kept';
     }
 

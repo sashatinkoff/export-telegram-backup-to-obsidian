@@ -249,6 +249,8 @@ class ImportTab {
     button(left, { label: 'Структура папок', ico: 'folder-tree', cls: 'tgi-btn-ghost', onClick: () => { this.treeOpen = !this.treeOpen; this.renderTree(); } });
     this.logBtn = button(left, { label: 'Только ошибки в журнале', ico: 'filter', cls: 'tgi-btn-ghost', onClick: () => this.toggleLogFilter() });
     button(left, { label: 'Пересчитать ссылки', ico: 'link', cls: 'tgi-btn-ghost', onClick: () => this.plugin.runRecalc() });
+    button(left, { label: 'Атрибуты: по JSON', ico: 'tag', cls: 'tgi-btn-ghost', onClick: () => this.plugin.runAddAttrs('json', this.source) });
+    button(left, { label: 'Атрибуты: во все', ico: 'tags', cls: 'tgi-btn-ghost', onClick: () => this.plugin.runAddAttrs('all') });
     this.leftBtns = left;
     const right = b.createDiv({ cls: 'tgi-bar-right' });
     this.cancelBtn = button(right, { label: 'Отмена', cls: 'tgi-btn-ghost', onClick: () => this.onCancel() });

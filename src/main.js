@@ -5,7 +5,7 @@ const { Plugin, Notice, Platform } = require('obsidian');
 const { DEFAULT_SETTINGS, VIEW_DASHBOARD } = require('./constants');
 const { NoteIndex, Originals, History } = require('./store');
 const { Review } = require('./review');
-const { runImport, runRecalc, emptyStats } = require('./importer');
+const { runImport, runRecalc, runAddAttrs, emptyStats } = require('./importer');
 const { scanSource } = require('./scan');
 const { resolveInVault, throttle, setGate, targetRel } = require('./util');
 const { setFormatMatching, setMediaByDate } = require('./media');
@@ -71,6 +71,8 @@ module.exports = class TelegramImportPlugin extends Plugin {
     this.addCommand({ id: 'open-panel', name: 'Открыть панель импорта Telegram', callback: () => this.openTab('import') });
     this.addCommand({ id: 'open-history', name: 'История импортов Telegram и инфографика', callback: () => this.openTab('history') });
     this.addCommand({ id: 'run-full-import', name: 'Импорт из Telegram', callback: () => this.startFromUi() });
+    this.addCommand({ id: 'add-attrs-json', name: 'Добавить свои атрибуты к заметкам из result.json', callback: () => this.runAddAttrs('json') });
+    this.addCommand({ id: 'add-attrs-all', name: 'Добавить свои атрибуты ко всем заметкам папки назначения', callback: () => this.runAddAttrs('all') });
     this.addCommand({ id: 'recalc-links-only', name: 'Только пересчитать ссылки Back/Next', callback: () => this.runRecalc() });
     this.addCommand({ id: 'review-conflicts', name: 'Разобрать конфликты слияния (сравнение side by side)', callback: () => this.openReview() });
     this.addRibbonIcon('send', 'Импорт из Telegram', () => this.openTab('import'));
@@ -152,7 +154,7 @@ module.exports = class TelegramImportPlugin extends Plugin {
   beginRun(kind, source) {
     const st = newRunState();
     Object.assign(st, { running: true, kind, source, archive: source ? source.path : '', startedAt: Date.now(), hasRun: true });
-    if (kind === 'links') { for (const id of ['unpack', 'copy', 'notes', 'review']) st.stages[id].state = 'skipped'; }
+    if (kind === 'links' || kind === 'attrs') { for (const id of ['unpack', 'copy', 'notes', 'review']) st.stages[id].state = 'skipped'; }
     else if (!source || source.kind !== 'zip') st.stages.unpack.state = 'skipped';
     this.state = st;
     this.cancelled = false;
@@ -301,6 +303,41 @@ module.exports = class TelegramImportPlugin extends Plugin {
     else if (result && result.stats && result.stats.links) {
       const l = result.stats.links;
       new Notice(`Telegram: ссылки Back/Next ${result.status === 'cancelled' ? 'остановлены' : 'пересчитаны'}\nобновлено ${l.changed} из ${l.total}`);
+    }
+    return record;
+  }
+
+  // Добавляет свои атрибуты в существующие заметки; mode: 'json' (по датам из result.json) или 'all'
+  async runAddAttrs(mode, sourceArg) {
+    if (this.state.running) { new Notice('Telegram: уже выполняется'); return null; }
+    await this.ready;
+    // источник: выбранный на вкладке «Импорт» (в настройки он попадает только после запуска импорта), иначе осмотренный, иначе из настроек
+    const source = sourceArg || (this.prescan ? { kind: this.prescan.kind, path: this.prescan.path } : { kind: this.settings.sourceKind || 'folder', path: this.settings.archiveFolder });
+    if (mode !== 'all' && !source.path) { new Notice('Telegram: сначала выберите экспорт (папку или ZIP) на вкладке «Импорт»'); return null; }
+    this.beginRun('attrs', mode === 'all' ? null : source);
+    let result = null;
+    let error = null;
+    try {
+      let json = null;
+      if (mode !== 'all') {
+        this.log(`Чтение result.json: ${source.path}`);
+        const prescan = this.prescan && this.prescan.path === source.path && this.prescan.kind === source.kind ? this.prescan : null;
+        json = prescan ? prescan.json : (await scanSource(source)).json;
+        this.log(`Сообщений в JSON: ${(json.messages || []).length}`);
+      }
+      result = await runAddAttrs({
+        vaultBase: this.vaultBase(), settings: this.settings, json, mode, review: this.review,
+        hooks: this.hooks(), isCancelled: () => this.cancelled,
+      });
+    } catch (e) {
+      console.error('[telegram-import]', e);
+      error = e;
+    }
+    const record = await this.endRun(result, error);
+    if (error) new Notice(`Telegram: ошибка\n${record.error}`, 10000);
+    else if (result && result.stats) {
+      const l = result.stats.links;
+      new Notice(l.total ? `Telegram: атрибуты добавлены в ${l.changed} из ${l.total} найденных заметок` : 'Telegram: подходящих заметок не найдено. Подробности в журнале на вкладке «Импорт»', l.total ? 5000 : 10000);
     }
     return record;
   }

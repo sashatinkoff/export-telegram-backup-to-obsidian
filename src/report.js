@@ -83,7 +83,7 @@ function buildHistoryReport(runs, totals) {
   ];
   for (const r of runs.slice().reverse()) {
     const n = r.stats.notes;
-    lines.push(`| ${when(r.startedAt)} | ${cell([r.sourceName || ''])} | ${r.kind === 'links' ? 'Ссылки' : 'Импорт'} | ${r.status} | ${r.messages || ''} | ${n.written} | ${n.merged} | ${r.stats.files.copied} | ${r.stats.links.changed} | ${r.conflicts || 0} | ${r.resolved || 0} | ${Math.round(r.durationMs / 100) / 10} |`);
+    lines.push(`| ${when(r.startedAt)} | ${cell([r.sourceName || ''])} | ${r.kind === 'links' ? 'Ссылки' : r.kind === 'attrs' ? 'Атрибуты' : 'Импорт'} | ${r.status} | ${r.messages || ''} | ${n.written} | ${n.merged} | ${r.stats.files.copied} | ${r.stats.links.changed} | ${r.conflicts || 0} | ${r.resolved || 0} | ${Math.round(r.durationMs / 100) / 10} |`);
   }
   return `${lines.join('\n')}\n`;
 }
