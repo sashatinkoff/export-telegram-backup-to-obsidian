@@ -1,7 +1,7 @@
 'use strict';
 
 const BUILD = '0.5.4 · 2026-10-22';
-const VERSION = '0.5.4';
+const VERSION = '0.6.0';
 
 const VIEW_DASHBOARD = 'telegram-import-dashboard';
 const VIEW_REVIEW = 'telegram-import-review';
@@ -27,7 +27,13 @@ const DEFAULT_SETTINGS = {
   fullscreen: true,               // окно плагина открывается на всю рабочую область: боковые панели сворачиваются
   verifyAll: false,               // читать с диска каждую заметку, даже если она не менялась с прошлого импорта
   reviewLocalEdits: true,         // заметки, где текст правили вы (а в Telegram он прежний), тоже показывать на экране сравнения
-  mediaByDate: true,              // медиа, переименованные по дате (2026-10-03_09-46-36_001.webp), считаются теми же, что photo_N@03-10-2026_09-46-36.jpg
+  mediaByDate: true,
+  mediaLayout: 'keep', // 'keep' — как в архиве, 'year' — по папкам-годам, 'year-rename' — по годам и с именем заметки
+  mediaRoot: 'media',
+  convertImages: false,
+  imageFormat: 'webp',
+  imageQuality: 80,
+  imageMaxSide: 0,              // медиа, переименованные по дате (2026-10-03_09-46-36_001.webp), считаются теми же, что photo_N@03-10-2026_09-46-36.jpg
   mediaSameName: 'kind',          // файлы с тем же именем и другим расширением: kind — только того же вида (png/webp), any — любые, off — копировать
   ignoreAttrs: [],                // YAML-атрибуты, которые плагин не добавляет в уже существующие заметки (Date, tags и т. п.)
   autoOpenReview: true,           // после импорта сам открывать экран разбора, если есть заметки на сравнении

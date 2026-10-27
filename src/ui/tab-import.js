@@ -509,7 +509,9 @@ class ImportTab {
       row.createSpan({ text: `${parts[2]}/` });
       row.createSpan({ cls: 'tgi-muted', text: `${fmtNum(n)} ${plural(n, 'заметка', 'заметки', 'заметок')}` });
     }
-    tree.createDiv({ cls: 'tgi-tree-l1 tgi-muted', text: 'photos/, video_files/, files/ ... : файлы архива с сохранением структуры' });
+    const lay = this.plugin.settings.mediaLayout || 'keep';
+    const root = this.plugin.settings.mediaRoot === undefined ? 'media' : this.plugin.settings.mediaRoot;
+    tree.createDiv({ cls: 'tgi-tree-l1 tgi-muted', text: lay === 'keep' ? 'photos/, video_files/, files/ ... : файлы архива с сохранением структуры' : `${root ? `${root}/` : ''}2026/ ... : медиа по годам${lay === 'year-rename' ? ', имя по заметке' : ''}` });
     c.createDiv({ cls: 'tgi-muted tgi-small', text: `Всего заметок: ${fmtNum(posts.length)}` });
   }
 }

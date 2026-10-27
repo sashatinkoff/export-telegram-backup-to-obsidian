@@ -10,7 +10,11 @@ class TelegramConverter {
     this.yandexApiKey = yandexApiKey;
     this.dateFormat = dateFormat;
     this.threshold = threshold;
+    this.mediaNames = null; // Map «путь в архиве -> итоговое имя файла» (после раскладки/конвертации)
+    this._media = [];
   }
+
+  setMediaNames(map) { this.mediaNames = map; }
 
   formatHeaderDate(dt) {
     if (this.dateFormat) return formatDate(this.dateFormat, dt);
@@ -56,6 +60,7 @@ class TelegramConverter {
   }
 
   processGroup(group) {
+    this._media = [];
     const textMessages = [];
     const mediaMessages = [];
     for (const msg of group) {
@@ -107,6 +112,7 @@ class TelegramConverter {
       date: primary.date,
       text: fullText,
       fileName: this.getFileName(primary),
+      media: this._media,
       hashTags: allTags,
       forwardedFrom: primary.forwarded_from,
     };
@@ -211,8 +217,11 @@ class TelegramConverter {
     else filePath = String(field);
 
     const slash = filePath.lastIndexOf('/');
-    const fileName = slash >= 0 ? filePath.slice(slash + 1) : filePath;
+    let fileName = slash >= 0 ? filePath.slice(slash + 1) : filePath;
     if (!fileName) return '';
+    if (!this._media.includes(filePath)) this._media.push(filePath);
+    const mapped = this.mediaNames && this.mediaNames.get(filePath);
+    if (mapped) fileName = mapped;
 
     const ext = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : '';
     if (['photo', 'sticker', 'animation'].includes(mediaType) || ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {

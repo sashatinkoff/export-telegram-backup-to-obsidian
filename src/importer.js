@@ -3,6 +3,8 @@
 const { fsx, path } = require('./platform');
 const { TelegramConverter } = require('./converter');
 const { copyArchive } = require('./media');
+const { planMedia } = require('./mediaplan');
+const { convertOptions } = require('./imageconv');
 const { recalcLinks } = require('./links');
 const { NoteSync } = require('./sync');
 const { countContent, chatInfo } = require('./scan');
@@ -75,6 +77,23 @@ async function runImportFrom(env) {
   const target = resolveInVault(vaultBase, settings.targetFolder, 'Папка назначения');
   resolveInVault(vaultBase, settings.conflictsFolder || 'merge_conflicts', 'Папка конфликтов');
 
+  // ---- 0. result.json читаем сразу: от него зависит раскладка медиа
+  let json = env.json;
+  if (!json) {
+    const raw = await fsx.readFile(jsonPath, 'utf8');
+    json = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
+  }
+  const converter = new TelegramConverter({
+    yandexApiKey: settings.yandexApiKey,
+    dateFormat: settings.dateFormat,
+    threshold: Math.max(0, Number(settings.mergeThreshold) || 0),
+    convertTags: settings.convertTags !== false,
+  });
+  let posts = converter.getPosts(json);
+  const convert = convertOptions(settings);
+  const layout = settings.mediaLayout || 'keep';
+  const reshape = layout !== 'keep' || !!convert;
+
   // ---- 1. файлы архива -> хранилище
   if (settings.copyMedia === false) {
     stage('copy', { state: 'skipped', label: '' });
@@ -82,34 +101,33 @@ async function runImportFrom(env) {
   } else {
     stage('copy', { state: 'running', done: 0, total: 0, label: 'просмотр папок…' });
     log(`Архив: ${env.source ? env.source.path : archiveFolder}`);
+    const plan = reshape ? planMedia(posts, { layout, root: settings.mediaRoot, convert }) : null;
     stats.files = await copyArchive(archiveFolder, target, {
       onProgress: (done, total, label) => { stage('copy', { done, total, label }); stats.files = { ...stats.files }; },
       isCancelled,
+      plan,
+      convert,
     });
     pushStats();
     if (isCancelled()) { stage('copy', { state: 'cancelled' }); log('Остановлено на этапе копирования файлов', 'warn'); return result('cancelled'); }
     stage('copy', { state: 'done', label: '' });
+    const resolved = stats.files.resolved;
+    delete stats.files.resolved; // Map не нужен в статистике и истории
+    if (reshape && resolved) {
+      // ссылки в заметках должны вести на файлы под их итоговыми именами
+      converter.setMediaNames(resolved);
+      posts = converter.getPosts(json);
+    }
   }
   log(`Файлы: скопировано ${stats.files.copied}, без изменений ${stats.files.skipped}${stats.files.errors ? `, ошибок ${stats.files.errors}` : ''}`);
+  if (stats.files.converted) log(`Конвертировано изображений: ${stats.files.converted}, сэкономлено ${(stats.files.saved / 1048576).toFixed(1)} МБ`);
   if (stats.files.errors) log(`Ошибок копирования: ${stats.files.errors} (подробности в консоли разработчика)`, 'error');
 
   // ---- 2. result.json -> заметки
-  stage('notes', { state: 'running', done: 0, total: 0, label: 'чтение result.json…' });
-  let json = env.json;
-  if (!json) {
-    const raw = await fsx.readFile(jsonPath, 'utf8');
-    json = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
-  }
+  stage('notes', { state: 'running', done: 0, total: 0, label: 'подготовка заметок…' });
   meta = { chat: chatInfo(json), content: countContent(json).counts, messages: (json.messages || []).length };
   await tick();
 
-  const converter = new TelegramConverter({
-    yandexApiKey: settings.yandexApiKey,
-    dateFormat: settings.dateFormat,
-    threshold: Math.max(0, Number(settings.mergeThreshold) || 0),
-    convertTags: settings.convertTags !== false,
-  });
-  const posts = converter.getPosts(json);
   stats.notes.total = posts.length;
   stage('notes', { total: posts.length, label: '' });
 

@@ -2,10 +2,12 @@
 // Копирование файлов архива (фото, видео, документы) в хранилище. Ничего не перезаписывает.
 const { path, fsx, isNative, nodeFs } = require('./platform');
 const { mapPool } = require('./util');
+const { needsConversion, convertBytes } = require('./imageconv');
 
 
 const STAT_CONCURRENCY = 32;
 const COPY_CONCURRENCY = 8;
+const CONVERT_CONCURRENCY = 3;
 
 const THUMB_SKIP_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 
@@ -111,9 +113,9 @@ async function scanArchive(src) {
   return { dirs, total };
 }
 
-// Даты в именах медиафайлов, уже лежащих в папке назначения (в любых подпапках)
+// Даты в именах медиафайлов, уже лежащих в папке назначения (в любых подпапках): ключ даты -> имя файла
 async function collectDateKeys(root) {
-  const keys = new Set();
+  const keys = new Map();
   const SKIP = new Set(['.obsidian', '.git', '.trash', 'node_modules']);
   const walk = async (dir) => {
     let entries;
@@ -122,7 +124,7 @@ async function collectDateKeys(root) {
     for (const e of entries) {
       if (e.isDirectory()) { if (!SKIP.has(e.name)) subdirs.push(path.join(dir, e.name)); } else if (e.isFile() && EXT_FAMILY.has(path.extname(e.name).slice(1).toLowerCase())) {
         const k = dateKey(e.name);
-        if (k) keys.add(k);
+        if (k && !keys.has(k)) keys.set(k, e.name);
       }
     }
     await Promise.all(subdirs.map(walk));
@@ -131,12 +133,41 @@ async function collectDateKeys(root) {
   return keys;
 }
 
+const posixRel = (...parts) => parts.filter(Boolean).join('/').replace(/\\/g, '/');
+const baseOf = (p) => p.slice(p.lastIndexOf('/') + 1);
+const dirOf = (p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+
+// Записывает файл с конвертацией. Возвращает { name, converted, size, saved }: name — итоговое имя (если
+// конвертировать не удалось или результат больше исходного, файл копируется как есть под исходным расширением)
+async function writeConverted(srcFile, dstDir, toName, origName, st, convert) {
+  const bytes = await fsx.readBytes(srcFile);
+  const r = await convertBytes(bytes, convert);
+  if (r) {
+    const to = path.join(dstDir, toName);
+    if (await fsx.exists(to)) throw new Error(`файл уже существует: ${to}`);
+    await fsx.writeFile(to, r.bytes);
+    await fsx.utimes(to, st.atime, st.mtime).catch(() => {});
+    return { name: toName, converted: true, size: r.bytes.length, saved: Math.max(0, bytes.length - r.bytes.length) };
+  }
+  const stem = toName.slice(0, toName.lastIndexOf('.') > 0 ? toName.lastIndexOf('.') : toName.length);
+  const name = `${stem}${origName.includes('.') ? origName.slice(origName.lastIndexOf('.')) : ''}`;
+  const to = path.join(dstDir, name);
+  await fsx.copyFile(srcFile, to);
+  await fsx.utimes(to, st.atime, st.mtime).catch(() => {});
+  return { name, converted: false, size: st.size, saved: 0 };
+}
+
 // Копирует архив в хранилище. Папки объединяются; существующие файлы НЕ перезаписываются
-// (ни с тем же именем, ни в другом формате того же медиа), а файлы с идентичным содержимым под другим
-// именем в той же папке считаются дубликатами и пропускаются.
-// hooks: onProgress(done, total, label), isCancelled()
+// (ни с тем же именем, ни в другом формате того же медиа, ни переименованные по дате), а файлы с идентичным
+// содержимым под другим именем в той же папке считаются дубликатами и пропускаются.
+// hooks: onProgress(done, total, label), isCancelled(),
+//   plan — Map «путь в архиве -> куда положить» (раскладка по годам, новые имена и расширения), convert — настройки конвертации.
+// Возвращает статистику и resolved: Map «путь в архиве -> имя файла в хранилище» (для ссылок в заметках)
 async function copyArchive(src, dst, hooks = {}) {
-  const stats = { copied: 0, skipped: 0, errors: 0, bytes: 0 };
+  const stats = { copied: 0, skipped: 0, errors: 0, bytes: 0, converted: 0, saved: 0 };
+  const resolved = new Map();
+  const convert = hooks.convert || null;
+  const plan = hooks.plan || null;
   const { dirs, total } = await scanArchive(src);
   let done = 0;
   const advance = (n, label) => {
@@ -146,35 +177,44 @@ async function copyArchive(src, dst, hooks = {}) {
   if (hooks.onProgress) hooks.onProgress(0, total, '');
   const dateKeys = byDate ? await collectDateKeys(dst) : null; // файлы, переименованные по дате, считаются уже существующими
 
+  // Куда идёт каждый файл: группы по папке назначения
+  const groups = new Map();
   for (const { rel, files } of dirs) {
+    for (const name of files) {
+      const fromRel = posixRel(rel, name);
+      const toRel = (plan && plan.get(fromRel)) || fromRel;
+      const toDir = dirOf(toRel);
+      if (!groups.has(toDir)) groups.set(toDir, []);
+      groups.get(toDir).push({ fromRel, name, toName: baseOf(toRel), srcFile: path.join(src, rel, name) });
+    }
+  }
+
+  for (const [toDir, jobs] of groups) {
     if (hooks.isCancelled && hooks.isCancelled()) break;
-    const srcDir = path.join(src, rel);
-    const dstDir = path.join(dst, rel);
+    const dstDir = path.join(dst, ...toDir.split('/').filter(Boolean));
     await fsx.mkdir(dstDir, { recursive: true });
-    if (!files.length) continue;
 
     const dstNames = await fsx.readdir(dstDir);
-    const existingNames = new Set();
-    const existingKeys = new Set();
+    const existingNames = new Map(); // имя в нижнем регистре -> настоящее имя
+    const existingKeys = new Map();
     for (const name of dstNames) {
-      existingNames.add(name.toLowerCase());
+      existingNames.set(name.toLowerCase(), name);
       const key = mediaKey(name);
-      if (key) existingKeys.add(key);
+      if (key && !existingKeys.has(key)) existingKeys.set(key, name);
     }
 
     // 1. быстрый отсев по имени (без обращения к диску)
     const candidates = [];
-    for (const name of files) {
-      const key = mediaKey(name);
-      const dk = dateKeys ? dateKey(name) : null;
-      if (existingNames.has(name.toLowerCase()) || (key && existingKeys.has(key)) || (dk && dateKeys.has(dk))) stats.skipped++;
-      else candidates.push(name);
+    for (const job of jobs) {
+      const key = mediaKey(job.toName);
+      const dk = dateKeys ? dateKey(job.name) : null;
+      const found = existingNames.get(job.toName.toLowerCase()) || (key && existingKeys.get(key)) || (dk && dateKeys.get(dk));
+      if (found) { stats.skipped++; resolved.set(job.fromRel, found); advance(1, job.name); } else candidates.push(job);
     }
-    advance(files.length - candidates.length, rel);
     if (!candidates.length) continue;
 
     // 2. размеры файлов-кандидатов и уже лежащих в хранилище (параллельно)
-    const srcStats = await mapPool(candidates, STAT_CONCURRENCY, (name) => fsx.stat(path.join(srcDir, name)).catch(() => null));
+    const srcStats = await mapPool(candidates, STAT_CONCURRENCY, (job) => fsx.stat(job.srcFile).catch(() => null));
     const sizeIndex = new Map(); // размер -> пути файлов, с которыми сравниваем содержимое
     const addSize = (size, file) => {
       if (!sizeIndex.has(size)) sizeIndex.set(size, []);
@@ -186,44 +226,52 @@ async function copyArchive(src, dst, hooks = {}) {
     // 3. решения принимаются по порядку, чтобы дубликаты внутри самого архива тоже находились
     const toCopy = [];
     for (let i = 0; i < candidates.length; i++) {
-      const name = candidates[i];
+      const job = candidates[i];
       const st = srcStats[i];
-      const srcFile = path.join(srcDir, name);
-      if (!st) { stats.errors++; advance(1, name); continue; }
+      if (!st) { stats.errors++; advance(1, job.name); continue; }
 
-      const key = mediaKey(name);
-      let skip = existingNames.has(name.toLowerCase()) || (key && existingKeys.has(key));
-      if (!skip) {
+      const willConvert = needsConversion(job.fromRel, convert);
+      const key = mediaKey(job.toName);
+      let found = existingNames.get(job.toName.toLowerCase()) || (key && existingKeys.get(key)) || null;
+      if (!found && !willConvert) {
         for (const ref of sizeIndex.get(st.size) || []) {
           try {
-            if (await sameContent(srcFile, ref)) { skip = true; break; }
+            if (await sameContent(job.srcFile, ref)) { found = baseOf(ref.replace(/\\/g, '/')); break; }
           } catch (e) { /* не смогли прочитать — считаем файлы разными */ }
         }
       }
-      if (skip) { stats.skipped++; advance(1, name); continue; }
+      if (found) { stats.skipped++; resolved.set(job.fromRel, found); advance(1, job.name); continue; }
 
-      existingNames.add(name.toLowerCase());
-      if (key) existingKeys.add(key);
-      addSize(st.size, srcFile); // следующие файлы сравниваются и с тем, что ещё только копируется
-      toCopy.push({ name, st });
+      existingNames.set(job.toName.toLowerCase(), job.toName);
+      if (key) existingKeys.set(key, job.toName);
+      if (!willConvert) addSize(st.size, job.srcFile); // следующие файлы сравниваются и с тем, что ещё только копируется
+      toCopy.push({ job, st, willConvert });
     }
 
-    // 4. копирование (параллельно)
-    await mapPool(toCopy, COPY_CONCURRENCY, async ({ name, st }) => {
-      const from = path.join(srcDir, name);
-      const to = path.join(dstDir, name);
+    // 4. копирование и конвертация (параллельно; конвертация тяжелее, поэтому потоков меньше)
+    const anyConvert = toCopy.some((x) => x.willConvert);
+    await mapPool(toCopy, anyConvert ? CONVERT_CONCURRENCY : COPY_CONCURRENCY, async ({ job, st, willConvert }) => {
       try {
-        await fsx.copyFile(from, to);
-        await fsx.utimes(to, st.atime, st.mtime).catch(() => {});
+        if (willConvert) {
+          const r = await writeConverted(job.srcFile, dstDir, job.toName, job.name, st, convert);
+          resolved.set(job.fromRel, r.name);
+          stats.bytes += r.size;
+          if (r.converted) { stats.converted++; stats.saved += r.saved; }
+        } else {
+          await fsx.copyFile(job.srcFile, path.join(dstDir, job.toName));
+          await fsx.utimes(path.join(dstDir, job.toName), st.atime, st.mtime).catch(() => {});
+          resolved.set(job.fromRel, job.toName);
+          stats.bytes += st.size;
+        }
         stats.copied++;
-        stats.bytes += st.size;
       } catch (e) {
-        console.error('[telegram-import] ошибка копирования', from, e);
+        console.error('[telegram-import] ошибка копирования', job.srcFile, e);
         stats.errors++;
       }
-      advance(1, name);
+      advance(1, job.name);
     }, hooks.isCancelled);
   }
+  stats.resolved = resolved;
   return stats;
 }
 

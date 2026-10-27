@@ -59,6 +59,30 @@ function renderSettingsForm(el, plugin, { redraw }) {
       await save('mediaByDate', v);
       if (plugin.index) { await plugin.ready; await plugin.index.clear(); }
     }));
+  new Setting(el).setName('Раскладка медиафайлов')
+    .setDesc('«Как в архиве»: photos/, video_files/ и т. д. «По годам»: <папка медиа>/2026/имя. «По годам с именем заметки»: <папка медиа>/2026/2026-09-01_12-00-00_001.jpg (как в Media Organizer). Ссылки в заметках подставляются автоматически. Уже лежащие файлы не перезаписываются.')
+    .addDropdown((d) => d.addOptions({ keep: 'Как в архиве', year: 'По годам', 'year-rename': 'По годам с именем заметки' }).setValue(s.mediaLayout || 'keep').onChange(async (v) => {
+      await save('mediaLayout', v);
+      redraw();
+    }));
+  if ((s.mediaLayout || 'keep') !== 'keep') {
+    new Setting(el).setName('Папка для медиа').setDesc('Внутри папки назначения. Пусто — годы прямо в ней.')
+      .addText((t) => t.setPlaceholder('media').setValue(s.mediaRoot === undefined ? 'media' : s.mediaRoot).onChange((v) => save('mediaRoot', v.trim())));
+  }
+  new Setting(el).setName('Конвертировать изображения')
+    .setDesc('jpg, png, webp, bmp и avif при копировании перекодируются в выбранный формат. Стикеры не трогаются. Если результат получился больше исходного, файл копируется как есть. Работает через браузерный движок Obsidian, в том числе на телефоне.')
+    .addToggle((t) => t.setValue(!!s.convertImages).onChange(async (v) => {
+      await save('convertImages', v);
+      redraw();
+    }));
+  if (s.convertImages) {
+    new Setting(el).setName('Формат изображений')
+      .addDropdown((d) => d.addOptions({ webp: 'WebP', jpeg: 'JPEG', png: 'PNG' }).setValue(s.imageFormat || 'webp').onChange((v) => save('imageFormat', v)));
+    new Setting(el).setName('Качество, %').setDesc('1–100. Для PNG не используется.')
+      .addText((t) => t.setValue(String(s.imageQuality || 80)).onChange((v) => save('imageQuality', Math.min(100, Math.max(1, parseInt(v, 10) || 80)))));
+    new Setting(el).setName('Максимальная сторона, px').setDesc('Ширина и высота не превысят это значение, пропорции сохраняются. 0 — не уменьшать.')
+      .addText((t) => t.setValue(String(s.imageMaxSide || 0)).onChange((v) => save('imageMaxSide', Math.max(0, parseInt(v, 10) || 0))));
+  }
   const ia = new Setting(el).setName('Игнорировать атрибуты')
     .setDesc('YAML-атрибуты, которые плагин не добавляет в уже существующие заметки при обновлении и слиянии (например, tags, если вы убрали их намеренно). Атрибуты и так не участвуют в поиске конфликтов: сравнивается только текст. Back и Next расставляет пересчёт ссылок. Начните вводить имя: подсказки берутся из атрибутов ваших заметок.');
   ia.settingEl.addClass('tgi-attr-setting');
