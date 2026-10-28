@@ -6,6 +6,9 @@ const { DEFAULT_SETTINGS, VIEW_DASHBOARD } = require('./constants');
 const { NoteIndex, Originals, History } = require('./store');
 const { Review } = require('./review');
 const { runImport, runRecalc, runAddAttrs, emptyStats } = require('./importer');
+const tgsync = require('./tgsync');
+const { sourceAttr } = require('./converter');
+const { collectMarkdownFiles } = require('./links');
 const { scanSource } = require('./scan');
 const { resolveInVault, throttle, setGate, targetRel } = require('./util');
 const { setFormatMatching, setMediaByDate } = require('./media');
@@ -71,6 +74,8 @@ module.exports = class TelegramImportPlugin extends Plugin {
     this.addCommand({ id: 'open-panel', name: 'Открыть панель импорта Telegram', callback: () => this.openTab('import') });
     this.addCommand({ id: 'open-history', name: 'История импортов Telegram и инфографика', callback: () => this.openTab('history') });
     this.addCommand({ id: 'run-full-import', name: 'Импорт из Telegram', callback: () => this.startFromUi() });
+    if (tgsync.isDesktop()) this.addCommand({ id: 'sync-telegram-settings', name: 'Настройки синхронизации с Telegram', callback: () => this.openSyncSettings() });
+    if (tgsync.isDesktop()) this.addCommand({ id: 'sync-telegram-api', name: 'Синхронизировать с Telegram через API (выгрузка и импорт)', callback: () => this.runSync() });
     this.addCommand({ id: 'add-attrs-json', name: 'Добавить свои атрибуты к заметкам из result.json', callback: () => this.runAddAttrs('json') });
     this.addCommand({ id: 'add-attrs-all', name: 'Добавить свои атрибуты ко всем заметкам папки назначения', callback: () => this.runAddAttrs('all') });
     this.addCommand({ id: 'recalc-links-only', name: 'Только пересчитать ссылки Back/Next', callback: () => this.runRecalc() });
@@ -93,6 +98,13 @@ module.exports = class TelegramImportPlugin extends Plugin {
     const saved = (await this.loadData()) || {};
     delete saved.conflicts; // поле прежних версий
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+    // Схема раскладки медиа v2: раскладка по типам и годам с переименованием включена по умолчанию (один раз для настроек прежних версий)
+    if (!saved.mediaSchema) {
+      if ((saved.mediaLayout || 'keep') === 'keep') this.settings.mediaLayout = 'year-rename';
+      if (saved.mediaRoot === 'media') this.settings.mediaRoot = '';
+      this.settings.mediaSchema = DEFAULT_SETTINGS.mediaSchema;
+    }
+    this.settings.mediaFolders = Object.assign({}, DEFAULT_SETTINGS.mediaFolders, saved.mediaFolders);
     if (saved.mediaSameName === undefined && saved.ignoreMediaFormat === false) this.settings.mediaSameName = 'off'; // прежняя настройка-переключатель
     setFormatMatching(this.settings.mediaSameName);
     setMediaByDate(this.settings.mediaByDate);
@@ -243,21 +255,26 @@ module.exports = class TelegramImportPlugin extends Plugin {
 
   // Основной вход (его вызывает панель импорта и тесты). source — { kind: 'folder'|'zip', path } или строка-путь папки.
   // Возвращает запись истории или null, если уже идёт импорт.
-  async runImport(sourceArg) {
+  // opts (для синхронизации через API): keepSource — не запоминать папку как «архив», before() — действие после начала запуска
+  // (выгрузка из Telegram), dropFirst/dropLast — отбросить крайние, возможно неполные, посты
+  async runImport(sourceArg, opts = {}) {
     if (this.state.running) { new Notice('Telegram: импорт уже выполняется'); return null; }
     await this.ready;
     const source = typeof sourceArg === 'string' || !sourceArg
       ? { kind: this.settings.sourceKind || 'folder', path: sourceArg || this.settings.archiveFolder }
       : sourceArg;
-    if (!source.file) this.settings.archiveFolder = source.path; // выбранный через диалог File пути на диске не имеет
-    this.settings.sourceKind = source.kind;
+    if (!source.file && !opts.keepSource) this.settings.archiveFolder = source.path; // выбранный через диалог File пути на диске не имеет
+    if (!opts.keepSource) this.settings.sourceKind = source.kind;
     await this.saveSettings();
     this.beginRun('import', source);
-    const prescan = this.prescan && this.prescan.path === source.path && this.prescan.kind === source.kind ? this.prescan : null;
+    const prescan = !opts.before && this.prescan && this.prescan.path === source.path && this.prescan.kind === source.kind ? this.prescan : null;
     let result = null;
     let error = null;
     try {
-      result = await runImport({
+      if (opts.before) await opts.before();
+      if (opts.before && this.cancelled) {
+        result = { status: 'cancelled', stats: emptyStats(), pending: this.review.count, meta: null };
+      } else result = await runImport({
         vaultBase: this.vaultBase(),
         settings: this.settings,
         source,
@@ -267,11 +284,14 @@ module.exports = class TelegramImportPlugin extends Plugin {
         review: this.review,
         hooks: this.hooks(),
         isCancelled: () => this.cancelled,
+        dropFirst: !!opts.dropFirst,
+        dropLast: !!opts.dropLast,
       });
     } catch (e) {
       console.error('[telegram-import]', e);
       error = e;
     }
+    if (opts.after) { try { await opts.after(result, error); } catch (e) { console.error('[telegram-import]', e); } }
     this.prescan = null; // разобранный JSON может быть очень большим: после импорта не держим его в памяти
     const record = await this.endRun(result, error);
     if (!error && record.pending && this.settings.autoOpenReview && result.status === 'ok') await this.openTab('conflicts');
@@ -342,6 +362,166 @@ module.exports = class TelegramImportPlugin extends Plugin {
     return record;
   }
 
+  // ---------- синхронизация через API (Python + Telethon, только компьютер) ----------
+
+  openSyncSettings() { return this.openTab('sync'); }
+
+  tgScript() { return path.join(this.pluginDir, 'tg_export.py'); }
+
+  async tgEnv() {
+    const creds = await tgsync.loadCreds();
+    const py = await tgsync.resolvePython(this.settings.tgPython);
+    if (!py) throw new Error('Python не найден. Нажмите «Установить Telethon» в настройках (раздел «Синхронизация через API») или укажите путь к Python');
+    if (!(await fsx.exists(this.tgScript()))) throw new Error('Рядом с плагином нет tg_export.py. Скопируйте папку плагина целиком (вместе с этим файлом)');
+    return { python: py.exe, script: this.tgScript(), env: { TGI_API_ID: String(creds.apiId || ''), TGI_API_HASH: String(creds.apiHash || ''), TGI_PROXY: String(this.settings.tgProxy || '') }, creds };
+  }
+
+  // Запрос текста у пользователя (телефон, код, пароль); null — отмена. Подменяется в тестах
+  promptText(title, message, opts = {}) {
+    const { PromptModal } = require('./ui/modals');
+    return new Promise((resolve) => new PromptModal(this.app, { title, message, secret: !!opts.secret, onDone: resolve }).open());
+  }
+
+  async tgCheck() {
+    return tgsync.checkEnv({ preferred: this.settings.tgPython, script: this.tgScript() });
+  }
+
+  async tgSetup(onLog) {
+    const r = await tgsync.setupEnv({ preferred: this.settings.tgPython, onLog });
+    return r;
+  }
+
+  // Вход в Telegram: телефон, код, при необходимости пароль 2FA
+  async tgLogin(onLog, opts = {}) {
+    const env = await this.tgEnv();
+    if (!env.creds.apiId || !env.creds.apiHash) throw new Error('Укажите api_id и api_hash (my.telegram.org)');
+    try { await fsx.mkdir(tgsync.configDir(), { recursive: true }); } catch (e) { throw new Error(`Нет прав на запись в ${tgsync.configDir()}: ${e.code || e.message}`); }
+    const titles = { phone: 'Вход в Telegram: телефон', code: 'Вход в Telegram: код', password: 'Вход в Telegram: пароль' };
+    let who = '';
+    let cancelled = false;
+    let qrModal = null;
+    const args = ['login', '--session', tgsync.sessionPath()];
+    if (opts.qr) args.push('--qr');
+    const r = await tgsync.runPy({
+      python: env.python, script: env.script, args, env: env.env,
+      isCancelled: () => cancelled,
+      onAsk: (key, prompt) => this.promptText(titles[key] || 'Telegram', prompt, { secret: key === 'password' }),
+      onEvent: (ev) => {
+        if (ev.event === 'logged_in') { who = ev.name || ev.phone || ''; if (qrModal) qrModal.finish(); }
+        if (ev.event === 'log' && onLog) onLog(ev.message);
+        if (ev.event === 'qr') {
+          if (!qrModal) {
+            const { QrModal } = require('./ui/modals');
+            qrModal = new QrModal(this.app, { onCancel: () => { cancelled = true; } });
+            qrModal.open();
+          }
+          qrModal.show(ev.matrix, ev.url);
+        }
+      },
+    });
+    if (qrModal) qrModal.finish();
+    if (cancelled) throw new Error('Вход отменён');
+    if (r.error) throw new Error(r.error);
+    return who;
+  }
+
+  // Список чатов аккаунта для выбора
+  async tgChats() {
+    const env = await this.tgEnv();
+    const chats = [];
+    const r = await tgsync.runPy({
+      python: env.python, script: env.script, args: ['chats', '--session', tgsync.sessionPath()], env: env.env,
+      onEvent: (ev) => { if (ev.event === 'chat') chats.push(ev); },
+    });
+    if (r.error) throw new Error(r.error);
+    return chats;
+  }
+
+  // Кнопка «Синхронизировать»: выгрузка из Telegram за период и обычный импорт результата
+  async runSync() {
+    if (this.state.running) { new Notice('Telegram: уже выполняется'); return null; }
+    if (!tgsync.isDesktop()) { new Notice('Telegram: синхронизация через API доступна только на компьютере'); return null; }
+    await this.ready;
+    const s = this.settings;
+    if (!s.tgChat) { new Notice('Telegram: выберите чат в настройках (раздел «Синхронизация через API»)'); return null; }
+    let env;
+    try { env = await this.tgEnv(); } catch (e) { new Notice(`Telegram: ${e.message}`, 10000); return null; }
+    if (!env.creds.apiId || !env.creds.apiHash) { new Notice('Telegram: укажите api_id и api_hash в настройках'); return null; }
+    if (!(await tgsync.hasSession())) { new Notice('Telegram: сначала войдите в Telegram (настройки, кнопка «Войти в Telegram»)'); return null; }
+
+    const out = s.tgExportDir && s.tgExportDir.trim() ? s.tgExportDir.trim() : tgsync.defaultExportDir();
+    let bounds = { since: null, until: null };
+    const prepare = async () => {
+      let lastNote = null;
+      if (!s.tgPeriod || s.tgPeriod === 'last') {
+        const target = resolveInVault(this.vaultBase(), s.targetFolder, 'Папка назначения');
+        if (await fsx.exists(target)) {
+          const files = await collectMarkdownFiles(target, [resolveInVault(this.vaultBase(), s.conflictsFolder || 'merge_conflicts', 'Папка конфликтов')]);
+          // «Последняя заметка» — самая свежая из помеченных обязательным атрибутом «Источник» (имя и значение из настроек)
+          const src = sourceAttr(s);
+          this.log(`Ищу последнюю заметку с атрибутом «${src.name}: ${src.value}» среди ${files.length} файлов`);
+          const found = await tgsync.lastNoteByAttr(files, src);
+          if (found.date) {
+            lastNote = found.date;
+            this.log(`Последняя заметка с «${src.name}: ${src.value}»: ${tgsync.localIso(lastNote).replace('T', ' ')} (просмотрено заметок: ${found.scanned})`);
+          } else {
+            const other = found.others.length ? ` В заметках встречаются другие значения: ${found.others.join(', ')}.` : '';
+            this.log(`Нет заметок с атрибутом «${src.name}: ${src.value}» (просмотрено ${found.scanned}).${other} Чтобы проставить атрибут в существующие заметки, нажмите «Атрибуты: во все»`, 'warn');
+            lastNote = tgsync.newestNoteDate(files);
+            if (lastNote) this.log(`Беру самую свежую заметку по дате в имени файла: ${tgsync.localIso(lastNote).replace('T', ' ')}`, 'warn');
+          }
+        } else {
+          this.log(`Папки назначения нет: ${target}`, 'warn');
+        }
+        if (!lastNote) {
+          // Не выгружаем всю историю молча: это долго и часто не то, что нужно
+          throw new Error(`Не нашёл последнюю заметку (папка: ${target}). Проверьте «Папку назначения» в настройках или выберите период вручную. Если вы действительно хотите всю историю, выберите период «Вся история»`);
+        }
+      }
+      bounds = tgsync.periodBounds(s, lastNote);
+    };
+
+    const hooks = () => this.hooks();
+    const exportFromTelegram = async () => {
+      await prepare();
+      const st = this.state.stages.unpack;
+      st.title = 'Выгрузка из Telegram';
+      hooks().stage('unpack', { state: 'running', done: 0, total: 0, label: 'подключение…' });
+      await fsx.mkdir(out, { recursive: true });
+      await fsx.unlink(path.join(out, 'result.json')).catch(() => {});
+      const args = ['export', '--session', tgsync.sessionPath(), '--chat', String(s.tgChat), '--out', out];
+      if (bounds.since) args.push('--since', bounds.since);
+      if (bounds.until) args.push('--until', bounds.until);
+      if (s.tgMedia === false) args.push('--no-media');
+      else if (Number(s.tgMaxMb) > 0) args.push('--max-media-mb', String(Number(s.tgMaxMb)));
+      this.log(`Выгрузка из Telegram: ${s.tgChatTitle || s.tgChat}, период ${bounds.since ? bounds.since.replace('T', ' ') : 'с начала'} — ${bounds.until ? bounds.until.replace('T', ' ') : 'по сегодня'}`);
+      const r = await tgsync.runPy({
+        python: env.python, script: env.script, args, env: env.env, isCancelled: () => this.cancelled,
+        onEvent: (ev) => {
+          if (ev.event === 'progress') hooks().stage('unpack', { done: ev.done, total: ev.total || 0, label: ev.label || '' });
+          else if (ev.event === 'log') this.log(ev.message, ev.level === 'warn' ? 'warn' : 'info');
+          else if (ev.event === 'wait') this.log(ev.message, 'warn');
+        },
+      });
+      if (this.cancelled) { hooks().stage('unpack', { state: 'cancelled' }); return; }
+      if (r.error || !r.last) throw new Error(r.error || 'Выгрузка не завершилась');
+      hooks().stage('unpack', { state: 'done', label: '' });
+      this.log(`Выгружено сообщений: ${r.last.messages} (просмотрено ${r.last.scanned}), файлов: ${r.last.media}${r.last.skipped ? `, пропущено ${r.last.skipped}` : ''}`);
+      if (!r.last.messages) throw new Error('За выбранный период в чате нет новых сообщений');
+    };
+
+    const record = await this.runImport({ kind: 'folder', path: out }, {
+      keepSource: true,
+      before: exportFromTelegram,
+      after: async (result, error) => {
+        if (s.tgCleanup !== false && !error && result && result.status === 'ok') await fsx.rm(out, { recursive: true, force: true }).catch(() => {});
+      },
+      get dropFirst() { return !!bounds.since; },
+      get dropLast() { return !!bounds.until; },
+    });
+    return record;
+  }
+
   cancelImport() {
     if (!this.state.running) return;
     this.cancelled = true;
@@ -401,7 +581,7 @@ module.exports = class TelegramImportPlugin extends Plugin {
     return leaf;
   }
 
-  // Открывает окно плагина на нужной вкладке: import | conflicts | history | settings
+  // Открывает окно плагина на нужной вкладке: import | conflicts | history | sync | settings
   async openTab(tab) {
     this.uiTab = tab;
     if (this.settings.fullscreen !== false && !Platform.isMobile) this.hideSidebars();

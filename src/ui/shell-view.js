@@ -7,6 +7,7 @@ const { ImportTab } = require('./tab-import');
 const { ConflictsTab } = require('./tab-conflicts');
 const { HistoryTab } = require('./tab-history');
 const { SettingsTab } = require('./tab-settings');
+const { SyncTab } = require('./tab-sync');
 
 const THEMES = ['auto', 'dark', 'light'];
 const THEME_TITLE = { auto: 'Тема: как в Obsidian', dark: 'Тема: тёмная', light: 'Тема: светлая' };
@@ -39,6 +40,7 @@ class ImporterView extends ItemView {
       ['import', 'Новый импорт', ImportTab],
       ['conflicts', 'Конфликты записей', ConflictsTab],
       ['history', 'История и инфографика', HistoryTab],
+      ['sync', 'Telegram API', SyncTab],
       ['settings', 'Настройки плагина', SettingsTab],
     ];
     this.tabButtons = {};

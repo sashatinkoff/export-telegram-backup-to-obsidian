@@ -20,6 +20,21 @@ function normalizeCustomAttrs(list) {
   return [...out.values()];
 }
 
+// Обязательный атрибут «Источник»: имя и значение из настроек (по умолчанию Источник: Telegram)
+function sourceAttr(settings) {
+  const st = settings || {};
+  const name = String(st.sourceAttrName || '').trim().replace(/[:\n\r\s]+/g, '_') || 'Источник';
+  const value = String(st.sourceAttrValue === undefined ? 'Telegram' : st.sourceAttrValue).trim().replace(/\r?\n/g, ' ') || 'Telegram';
+  return { name, value };
+}
+
+// Все атрибуты для заметок: обязательный «Источник» и свои атрибуты (одноимённый свой атрибут заменяется обязательным)
+function effectiveAttrs(settings) {
+  const src = sourceAttr(settings);
+  const custom = (Array.isArray(settings && settings.customAttrs) ? settings.customAttrs : []).filter((a) => String((a && a.name) || '').trim().toLowerCase() !== src.name.toLowerCase());
+  return [{ name: src.name, value: src.value }, ...custom];
+}
+
 // Скаляр YAML: кавычки только когда без них значение разобралось бы иначе
 const yamlScalar = (v) => (/^[\s'"#&*!|>%@`[\]{},-]|:(\s|$)|\s#|\s$/.test(v) ? `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : v);
 
@@ -509,4 +524,4 @@ class TelegramConverter {
   }
 }
 
-module.exports = { TelegramConverter, normalizeCustomAttrs, attrLines };
+module.exports = { TelegramConverter, normalizeCustomAttrs, attrLines, sourceAttr, effectiveAttrs };

@@ -2,7 +2,8 @@
 // Вкладка «Новый импорт»: источник, правила, результаты сканирования, прогресс, журнал и кнопки запуска.
 const { TelegramConverter } = require('../converter');
 const { targetRel, targetLabel } = require('../util');
-const { h, icon, button, checkbox } = require('./dom');
+const { Notice } = require('obsidian');
+const { h, icon, button, checkbox, copyText } = require('./dom');
 const { fmtNum, plural, fmtDuration, fmtTime, fmtBytes, fmtDate } = require('./format');
 const { pickFolder, pickFile, pickFileObject, pathOfFile } = require('./pick-folder');
 const { isNative } = require('../platform');
@@ -238,6 +239,10 @@ class ImportTab {
     l.createSpan({ cls: 'tgi-dot is-live' });
     l.createSpan({ cls: 'tgi-mono tgi-small', text: 'Журнал обработки в реальном времени' });
     this.logRate = head.createSpan({ cls: 'tgi-mono tgi-small tgi-accent-y' });
+    button(head, { label: 'Копировать журнал', ico: 'copy', cls: 'tgi-btn-ghost', onClick: async () => {
+      const text = this.plugin.state.log.map((l) => `[${fmtTime(l.t)}] ${l.level === 'info' ? '' : `${l.level.toUpperCase()}: `}${l.message}`).join('\n');
+      new Notice(await copyText(text) ? 'Журнал скопирован' : 'Не удалось скопировать: выделите текст в журнале вручную');
+    } });
     this.logEl = c.createDiv({ cls: 'tgi-log', attr: { role: 'log' } });
   }
 
@@ -249,6 +254,7 @@ class ImportTab {
     button(left, { label: 'Структура папок', ico: 'folder-tree', cls: 'tgi-btn-ghost', onClick: () => { this.treeOpen = !this.treeOpen; this.renderTree(); } });
     this.logBtn = button(left, { label: 'Только ошибки в журнале', ico: 'filter', cls: 'tgi-btn-ghost', onClick: () => this.toggleLogFilter() });
     button(left, { label: 'Пересчитать ссылки', ico: 'link', cls: 'tgi-btn-ghost', onClick: () => this.plugin.runRecalc() });
+    if (isNative) button(left, { label: 'Синхронизировать с Telegram', ico: 'refresh-cw', cls: 'tgi-btn-ghost', onClick: () => this.plugin.runSync() });
     button(left, { label: 'Атрибуты: по JSON', ico: 'tag', cls: 'tgi-btn-ghost', onClick: () => this.plugin.runAddAttrs('json', this.source) });
     button(left, { label: 'Атрибуты: во все', ico: 'tags', cls: 'tgi-btn-ghost', onClick: () => this.plugin.runAddAttrs('all') });
     this.leftBtns = left;
@@ -512,8 +518,8 @@ class ImportTab {
       row.createSpan({ cls: 'tgi-muted', text: `${fmtNum(n)} ${plural(n, 'заметка', 'заметки', 'заметок')}` });
     }
     const lay = this.plugin.settings.mediaLayout || 'keep';
-    const root = this.plugin.settings.mediaRoot === undefined ? 'media' : this.plugin.settings.mediaRoot;
-    tree.createDiv({ cls: 'tgi-tree-l1 tgi-muted', text: lay === 'keep' ? 'photos/, video_files/, files/ ... : файлы архива с сохранением структуры' : `${root ? `${root}/` : ''}2026/ ... : медиа по годам${lay === 'year-rename' ? ', имя по заметке' : ''}` });
+    const root = this.plugin.settings.mediaRoot || '';
+    tree.createDiv({ cls: 'tgi-tree-l1 tgi-muted', text: lay === 'keep' ? 'photos/, video_files/, files/ ... : файлы архива с сохранением структуры' : `${root ? `${root}/` : ''}photos/2026/ ... : по типам и годам${lay === 'year-rename' ? ', имя по заметке' : ''}` });
     c.createDiv({ cls: 'tgi-muted tgi-small', text: `Всего заметок: ${fmtNum(posts.length)}` });
   }
 }

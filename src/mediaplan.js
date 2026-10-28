@@ -11,7 +11,15 @@ function extOf(name) {
   return i > 0 ? name.slice(i) : '';
 }
 
-function planMedia(posts, { layout = 'keep', root = '', convert = null } = {}) {
+// Папка типа медиа по первой папке пути в архиве (photos, video_files, ...): из настройки mediaFolders; неизвестные типы остаются как есть
+function typeFolder(dir, folders) {
+  const top = dir.split('/')[0];
+  if (!top) return '';
+  const v = folders && Object.prototype.hasOwnProperty.call(folders, top) ? folders[top] : top;
+  return String(v === undefined || v === null ? top : v).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+}
+
+function planMedia(posts, { layout = 'keep', root = '', convert = null, folders = null } = {}) {
   const plan = new Map();
   if (layout === 'keep' && !convert) return plan;
   const rootPart = String(root || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
@@ -29,7 +37,7 @@ function planMedia(posts, { layout = 'keep', root = '', convert = null } = {}) {
       let name = base;
       if (layout === 'year-rename') name = `${stem}_${String(n).padStart(3, '0')}${extOf(base)}`;
       if (newExt) name = name.slice(0, name.length - extOf(name).length) + newExt;
-      const folder = layout === 'keep' ? dir : [rootPart, String(dt.y)].filter(Boolean).join('/');
+      const folder = layout === 'keep' ? dir : (folders ? [rootPart, typeFolder(dir, folders), String(dt.y)] : [rootPart, String(dt.y)]).filter(Boolean).join('/');
       plan.set(src, folder ? `${folder}/${name}` : name);
     }
   }

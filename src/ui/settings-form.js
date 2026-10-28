@@ -4,6 +4,7 @@ const { Setting } = require('obsidian');
 const { pickFolder, pickFile } = require('./pick-folder');
 const { renderAttrPicker } = require('./attr-picker');
 const { renderCustomAttrs } = require('./custom-attrs');
+const { renderSyncForm } = require('./sync-form');
 const { renderFolderInput } = require('./folder-input');
 const { isNative } = require('../platform');
 const { VERSION } = require('../constants');
@@ -61,14 +62,19 @@ function renderSettingsForm(el, plugin, { redraw }) {
       if (plugin.index) { await plugin.ready; await plugin.index.clear(); }
     }));
   new Setting(el).setName('Раскладка медиафайлов')
-    .setDesc('«Как в архиве»: photos/, video_files/ и т. д. «По годам»: <папка медиа>/2026/имя. «По годам с именем заметки»: <папка медиа>/2026/2026-09-01_12-00-00_001.jpg (как в Media Organizer). Ссылки в заметках подставляются автоматически. Уже лежащие файлы не перезаписываются.')
+    .setDesc('«Как в архиве»: photos/, video_files/ и т. д. «По годам»: <папка типа>/2026/имя. «По годам с именем заметки» (по умолчанию): photos/2026/2026-09-01_12-00-00_001.jpg, video_files/2026/… и так для каждого типа (как в Media Organizer). Папки типов задаются ниже. Ссылки в заметках подставляются автоматически. Уже лежащие файлы не перезаписываются.')
     .addDropdown((d) => d.addOptions({ keep: 'Как в архиве', year: 'По годам', 'year-rename': 'По годам с именем заметки' }).setValue(s.mediaLayout || 'keep').onChange(async (v) => {
       await save('mediaLayout', v);
       redraw();
     }));
   if ((s.mediaLayout || 'keep') !== 'keep') {
-    new Setting(el).setName('Папка для медиа').setDesc('Внутри папки назначения. Пусто — годы прямо в ней.')
-      .addText((t) => t.setPlaceholder('media').setValue(s.mediaRoot === undefined ? 'media' : s.mediaRoot).onChange((v) => save('mediaRoot', v.trim())));
+    new Setting(el).setName('Общая папка для медиа').setDesc('Необязательно. Внутри папки назначения, перед папками типов. Пусто: папки типов лежат прямо в папке назначения.')
+      .addText((t) => t.setPlaceholder('пусто').setValue(s.mediaRoot || '').onChange((v) => save('mediaRoot', v.trim())));
+    const TYPES = [['photos', 'Фото'], ['video_files', 'Видео'], ['round_video_messages', 'Круглые видео'], ['voice_messages', 'Голосовые'], ['files', 'Документы'], ['stickers', 'Стикеры']];
+    for (const [key, title] of TYPES) {
+      new Setting(el).setName(`Папка: ${title}`).setDesc(`Файлы из папки архива ${key}/. Итог: ${s.mediaRoot ? `${s.mediaRoot}/` : ''}${(s.mediaFolders && s.mediaFolders[key]) || key}/2026/${(s.mediaLayout || '') === 'year-rename' ? '2026-02-12_11-34-32_001.ext' : 'имя.ext'}`)
+        .addText((t) => t.setPlaceholder(key).setValue((s.mediaFolders && s.mediaFolders[key]) !== undefined ? s.mediaFolders[key] : key).onChange(async (v) => { s.mediaFolders = Object.assign({}, s.mediaFolders, { [key]: v.trim().replace(/^\/+|\/+$/g, '') }); await plugin.saveSettings(); }));
+    }
   }
   new Setting(el).setName('Конвертировать изображения')
     .setDesc('jpg, png, webp, bmp и avif при копировании перекодируются в выбранный формат. Стикеры не трогаются. Если результат получился больше исходного, файл копируется как есть. Работает через браузерный движок Obsidian, в том числе на телефоне.')
@@ -84,8 +90,19 @@ function renderSettingsForm(el, plugin, { redraw }) {
     new Setting(el).setName('Максимальная сторона, px').setDesc('Ширина и высота не превысят это значение, пропорции сохраняются. 0 — не уменьшать.')
       .addText((t) => t.setValue(String(s.imageMaxSide || 0)).onChange((v) => save('imageMaxSide', Math.max(0, parseInt(v, 10) || 0))));
   }
+  group('Стандартные атрибуты заметок');
+  el.createEl('p', { cls: 'setting-item-description', text: 'Эти атрибуты плагин ставит в каждую заметку. Можно поменять только их имена и значение «Источника». Если у существующей заметки атрибута нет, он добавляется при следующем импорте или кнопкой «Атрибуты: во все».' });
+  const nameInput = (setting, key, def) => setting.addText((t) => t.setPlaceholder(def).setValue(s[key] || def).onChange((v) => save(key, v.trim().replace(/[:\s]+/g, '_') || def)));
+  nameInput(new Setting(el).setName('Дата').setDesc('Имя атрибута с датой поста. По умолчанию Date. У существующих заметок при пересчёте ссылок прежнее имя Date заменяется настроенным.'), 'dateAttrName', 'Date');
+  const srcSetting = new Setting(el).setName('Источник')
+    .setDesc('Обязательный атрибут: имя и значение (любое, по умолчанию «Источник: Telegram»). По нему синхронизация по API определяет последнюю заметку: выгружается всё, что новее самой свежей заметки с этим значением.');
+  nameInput(srcSetting, 'sourceAttrName', 'Источник');
+  srcSetting.addText((t) => t.setPlaceholder('Telegram').setValue(s.sourceAttrValue === undefined ? 'Telegram' : s.sourceAttrValue).onChange((v) => save('sourceAttrValue', v.trim() || 'Telegram')));
+  nameInput(new Setting(el).setName('Назад').setDesc('Имя атрибута со ссылкой на предыдущую заметку. По умолчанию Back. Прежние Back, Next и Prev заменяются настроенными именами.'), 'linkPrevName', 'Back');
+  nameInput(new Setting(el).setName('Вперёд').setDesc('Имя атрибута со ссылкой на следующую заметку. По умолчанию Next.'), 'linkNextName', 'Next');
+
   const ca = new Setting(el).setName('Свои атрибуты в заметках')
-    .setDesc('Добавляются в шапку новых и обновляемых заметок, например «Источник: телеграм». Одна строка в значении даёт обычный атрибут, несколько строк (по элементу на строку) дают список. Одинаковые имена объединяются в список. К заметкам, которые импорт не меняет, атрибуты не добавляются. Back, Next и атрибут с датой задаются отдельно.');
+    .setDesc('Добавляются в шапку новых и обновляемых заметок, например «Автор: я». Одна строка в значении даёт обычный атрибут, несколько строк (по элементу на строку) дают список. Одинаковые имена объединяются в список. К заметкам, которые импорт не меняет, атрибуты не добавляются. Дата, Источник, Назад и Вперёд задаются выше.');
   ca.settingEl.addClass('tgi-attr-setting');
   renderCustomAttrs(ca.controlEl, { app: plugin.app, values: Array.isArray(s.customAttrs) ? s.customAttrs : [], onChange: (v) => save('customAttrs', v) });
   const ia = new Setting(el).setName('Игнорировать атрибуты')
@@ -100,15 +117,6 @@ function renderSettingsForm(el, plugin, { redraw }) {
   new Setting(el).setName('Проверять каждую заметку на диске')
     .setDesc('По умолчанию заметки и ссылки, не менявшиеся с прошлого импорта (по дате и размеру файла), пропускаются без чтения. Включите, если файлы правят программы, не обновляющие дату изменения.')
     .addToggle((t) => t.setValue(s.verifyAll).onChange((v) => save('verifyAll', v)));
-  new Setting(el).setName('Атрибут с датой')
-    .setDesc('Имя YAML-атрибута с датой поста в новых заметках. По умолчанию Date. У существующих заметок при пересчёте ссылок прежнее имя Date заменяется настроенным.')
-    .addText((t) => t.setPlaceholder('Date').setValue(s.dateAttrName || 'Date').onChange((v) => save('dateAttrName', v.trim().replace(/[:\s]+/g, '_') || 'Date')));
-  new Setting(el).setName('Атрибут со ссылкой назад')
-    .setDesc('Имя YAML-атрибута, в который при пересчёте пишется ссылка на предыдущую заметку. По умолчанию Back. Прежние Back, Next и Prev заменяются настроенными именами.')
-    .addText((t) => t.setPlaceholder('Back').setValue(s.linkPrevName || 'Back').onChange((v) => save('linkPrevName', v.trim().replace(/[:\s]+/g, '_') || 'Back')));
-  new Setting(el).setName('Атрибут со ссылкой вперёд')
-    .setDesc('Имя YAML-атрибута для ссылки на следующую заметку. По умолчанию Next.')
-    .addText((t) => t.setPlaceholder('Next').setValue(s.linkNextName || 'Next').onChange((v) => save('linkNextName', v.trim().replace(/[:\s]+/g, '_') || 'Next')));
   new Setting(el).setName('Пересчитывать все файлы').setDesc('Выключено: файлы, где уже есть Back/Next, пропускаются.')
     .addToggle((t) => t.setValue(s.recalcForce).onChange((v) => save('recalcForce', v)));
 
@@ -122,6 +130,8 @@ function renderSettingsForm(el, plugin, { redraw }) {
   new Setting(el).setName('Ключ Яндекс Static Maps')
     .setDesc('Для превью-картинок локаций. Без ключа вместо картинки будет ссылка. Хранится только в data.json плагина.')
     .addText((t) => { t.inputEl.type = 'password'; t.setValue(s.yandexApiKey).onChange((v) => save('yandexApiKey', v.trim())); });
+
+  renderSyncForm(el, plugin, { redraw });
 
   group('Оформление');
   if (isNative) new Setting(el).setName('Открывать на всю рабочую область').setDesc('Боковые панели сворачиваются, пока открыто окно плагина, и возвращаются при его закрытии. Настоящий полноэкранный режим: кнопка в шапке окна.')

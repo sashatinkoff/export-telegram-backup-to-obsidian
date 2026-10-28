@@ -101,6 +101,7 @@ async function scanArchive(src) {
       if (e.isDirectory()) subdirs.push(e.name);
       else if (e.isFile()) {
         if (rel === '' && e.name === 'result.json') continue;
+        if (e.name.startsWith('.')) continue; // служебные файлы (.tgi_state.json от выгрузки через API, .DS_Store)
         if (THUMB_SKIP_EXTS.has(path.extname(e.name).toLowerCase()) && isThumbnail(e.name)) continue;
         files.push(e.name);
       }

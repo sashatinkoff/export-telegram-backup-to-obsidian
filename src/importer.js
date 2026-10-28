@@ -1,11 +1,12 @@
 'use strict';
 // Конвейер импорта: файлы архива -> заметки -> ссылки Back/Next -> сравнение заметок с одинаковыми именами.
 const { fsx, path } = require('./platform');
-const { TelegramConverter, normalizeCustomAttrs, attrLines } = require('./converter');
+const { TelegramConverter, normalizeCustomAttrs, attrLines, effectiveAttrs } = require('./converter');
 const { addAttrsToText, skipReason } = require('./addattrs');
 const { parseDate } = require('./util');
 const { copyArchive } = require('./media');
 const { planMedia } = require('./mediaplan');
+const { DEFAULT_SETTINGS } = require('./constants');
 const { convertOptions } = require('./imageconv');
 const { recalcLinks, getLinkNames, collectMarkdownFiles } = require('./links');
 const { NoteSync } = require('./sync');
@@ -90,11 +91,20 @@ async function runImportFrom(env) {
     dateFormat: settings.dateFormat,
     threshold: Math.max(0, Number(settings.mergeThreshold) || 0),
     convertTags: settings.convertTags !== false,
-    customAttrs: settings.customAttrs,
+    customAttrs: effectiveAttrs(settings),
   });
-  let posts = converter.getPosts(json);
+  // Выгрузка из API обрезана по краям периода: первая (и последняя при заданном конце) группа сообщений может быть неполной
+  const loadPosts = () => {
+    let list = converter.getPosts(json);
+    if (env.dropFirst) list = list.slice(1);
+    if (env.dropLast) list = list.slice(0, -1);
+    return list;
+  };
+  let posts = loadPosts();
   const convert = convertOptions(settings);
   const layout = settings.mediaLayout || 'keep';
+  log(`Раскладка медиа: ${{ keep: 'как в архиве', year: 'по годам', 'year-rename': 'по годам с именем заметки' }[layout] || layout}`);
+  log(convert ? `Конвертация изображений: ${convert.format}, качество ${convert.quality}${convert.maxSide ? `, до ${convert.maxSide} px` : ''}` : 'Конвертация изображений: выключена');
   const reshape = layout !== 'keep' || !!convert;
 
   // ---- 1. файлы архива -> хранилище
@@ -104,7 +114,7 @@ async function runImportFrom(env) {
   } else {
     stage('copy', { state: 'running', done: 0, total: 0, label: 'просмотр папок…' });
     log(`Архив: ${env.source ? env.source.path : archiveFolder}`);
-    const plan = reshape ? planMedia(posts, { layout, root: settings.mediaRoot, convert }) : null;
+    const plan = reshape ? planMedia(posts, { layout, root: settings.mediaRoot, convert, folders: Object.assign({}, DEFAULT_SETTINGS.mediaFolders, settings.mediaFolders) }) : null;
     stats.files = await copyArchive(archiveFolder, target, {
       onProgress: (done, total, label) => { stage('copy', { done, total, label }); stats.files = { ...stats.files }; },
       isCancelled,
@@ -119,9 +129,10 @@ async function runImportFrom(env) {
     if (reshape && resolved) {
       // ссылки в заметках должны вести на файлы под их итоговыми именами
       converter.setMediaNames(resolved);
-      posts = converter.getPosts(json);
+      posts = loadPosts();
     }
   }
+  if (stats.files.skipped && reshape) log('«Без изменений» — это файлы, которые уже есть в хранилище (по имени, по дате в имени или с тем же содержимым): они не перезаписываются, не переименовываются и не конвертируются', 'info');
   log(`Файлы: скопировано ${stats.files.copied}, без изменений ${stats.files.skipped}${stats.files.errors ? `, ошибок ${stats.files.errors}` : ''}`);
   if (stats.files.converted) log(`Конвертировано изображений: ${stats.files.converted}, сэкономлено ${(stats.files.saved / 1048576).toFixed(1)} МБ`);
   if (stats.files.errors) log(`Ошибок копирования: ${stats.files.errors} (подробности в консоли разработчика)`, 'error');
@@ -243,8 +254,7 @@ async function runAddAttrs(env) {
   const stage = (name, patch) => { if (hooks.stage) hooks.stage(name, patch); };
   const log = (message, level = 'info') => { if (hooks.log) hooks.log(message, level); };
   const stats = emptyStats();
-  const items = attrLines(normalizeCustomAttrs(settings.customAttrs));
-  if (!items.length) throw new Error('Добавьте хотя бы один атрибут в настройке «Свои атрибуты в заметках»');
+  const items = attrLines(normalizeCustomAttrs(effectiveAttrs(settings)));
   const target = resolveInVault(vaultBase, settings.targetFolder, 'Папка назначения');
   if (!(await fsx.exists(target))) throw new Error(`Нет папки назначения: ${target}`);
   const ignore = new Set((settings.ignoreAttrs || []).map((k) => String(k).trim().toLowerCase()).filter(Boolean));

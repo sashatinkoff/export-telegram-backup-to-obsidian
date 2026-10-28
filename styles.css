@@ -257,3 +257,7 @@ body.is-mobile .tgi-body { padding-bottom: 28px; }
 .tgi-cattr-del { font-size: 16px; padding: 4px 8px; }
 .tgi-cattr-add { align-self: flex-start; }
 @media (max-width: 600px) { .tgi-cattr { grid-template-columns: 1fr auto; } .tgi-cattr-value { grid-column: 1 / 2; } }
+
+/* Журналы: текст можно выделять и копировать */
+.tgi-log, .tgi-log *, .tgi-tglog { user-select: text; -webkit-user-select: text; cursor: text; }
+.tgi-tglog { max-height: 260px; overflow: auto; font-family: var(--font-monospace); font-size: 12px; }

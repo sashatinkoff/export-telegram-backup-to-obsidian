@@ -1,7 +1,7 @@
 'use strict';
 
 const BUILD = '0.5.4 · 2026-10-22';
-const VERSION = '0.8.2';
+const VERSION = '0.9.20';
 
 const VIEW_DASHBOARD = 'telegram-import-dashboard';
 const VIEW_REVIEW = 'telegram-import-review';
@@ -28,9 +28,25 @@ const DEFAULT_SETTINGS = {
   verifyAll: false,               // читать с диска каждую заметку, даже если она не менялась с прошлого импорта
   reviewLocalEdits: true,         // заметки, где текст правили вы (а в Telegram он прежний), тоже показывать на экране сравнения
   mediaByDate: true,
+  // Синхронизация через API (только компьютер): Python + Telethon, см. tgsync.js
+  tgPython: '', // путь или имя интерпретатора; пусто — автоопределение (python3, python …)
+  tgProxy: '', // socks5://127.0.0.1:1080 (необязательно: если Telegram доступен только через прокси)
+  tgChat: '', // @имя, ссылка или числовой id
+  tgChatTitle: '',
+  tgPeriod: 'last', // 'last' — с последней заметки, 'range' — период, 'all' — вся история
+  tgFrom: '',
+  tgTo: '',
+  tgMedia: true,
+  tgMaxMb: 0,
+  tgExportDir: '', // пусто — папка рядом с настройками вне хранилища
+  tgCleanup: true, // удалять выгрузку после импорта
+  sourceAttrName: 'Источник', // обязательный атрибут: имя; пишется в каждую заметку
+  sourceAttrValue: 'Telegram', // его значение (любое)
   customAttrs: [], // [{ name, value }]: свои атрибуты в новых заметках; несколько строк в value — список
-  mediaLayout: 'keep', // 'keep' — как в архиве, 'year' — по папкам-годам, 'year-rename' — по годам и с именем заметки
-  mediaRoot: 'media',
+  mediaLayout: 'year-rename', // 'keep' — как в архиве, 'year' — по папкам-годам, 'year-rename' — по годам и с именем заметки (photos/2026/2026-02-12_11-34-32_001.jpg)
+  mediaRoot: '', // общая папка внутри папки назначения, необязательно
+  mediaFolders: { photos: 'photos', video_files: 'video_files', round_video_messages: 'round_video_messages', voice_messages: 'voice_messages', files: 'files', stickers: 'stickers' }, // папка для каждого типа медиа (ключ — папка в архиве Telegram)
+  mediaSchema: 2, // версия схемы раскладки медиа: у настроек прежних версий (без этого поля) раскладка по умолчанию включается один раз
   convertImages: false,
   imageFormat: 'webp',
   imageQuality: 80,

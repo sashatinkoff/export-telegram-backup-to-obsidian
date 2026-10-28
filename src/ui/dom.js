@@ -51,4 +51,22 @@ function meta(parent, label, value, cls) {
   return row;
 }
 
-module.exports = { h, icon, button, checkbox, meta };
+// Копирование текста в буфер обмена: сначала современный API, затем запасной вариант через временное поле
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {
+    try {
+      const ta = document.body.createEl('textarea');
+      ta.value = text;
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    } catch (e2) { return false; }
+  }
+}
+
+module.exports = {
+  copyText, h, icon, button, checkbox, meta };
